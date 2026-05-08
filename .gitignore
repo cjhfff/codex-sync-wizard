@@ -1,0 +1,27 @@
+## .NET
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Build output
+publish/
+*.exe
+*.pdb
+*.dll
+!app.ico
+
+## VS / Rider
+.vs/
+.idea/
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Backup / experimental
+CodexSyncWizard.backup-*/
+*.bak
+inspect_sqlite.csx

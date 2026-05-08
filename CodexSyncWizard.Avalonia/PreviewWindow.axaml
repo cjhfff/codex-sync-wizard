@@ -1,0 +1,30 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="CodexSyncWizard.Avalonia.PreviewWindow"
+        Title="变更预览"
+        Width="640" Height="540"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Icon="/app.ico">
+
+    <Grid Margin="20,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" x:Name="HeaderLabel" Classes="section"/>
+
+        <TextBlock Grid.Row="1" x:Name="SubLabel" Classes="muted" Margin="0,8,0,8"/>
+
+        <Border Grid.Row="2" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" CornerRadius="2">
+            <ScrollViewer>
+                <TextBlock x:Name="FileList" FontFamily="Consolas, Menlo, monospace" FontSize="11" Padding="8,6" TextWrapping="NoWrap"/>
+            </ScrollViewer>
+        </Border>
+
+        <Button Grid.Row="3" Content="关闭" MinWidth="90" HorizontalAlignment="Right" Margin="0,12,0,0" Click="OnClose"/>
+    </Grid>
+</Window>

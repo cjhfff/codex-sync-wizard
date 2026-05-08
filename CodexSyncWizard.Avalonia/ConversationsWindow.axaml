@@ -1,0 +1,58 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="CodexSyncWizard.Avalonia.ConversationsWindow"
+        Title="对话记录"
+        Width="960" Height="640"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Icon="/app.ico">
+
+    <Grid Margin="20,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <StackPanel Spacing="2">
+                <TextBlock x:Name="HeaderTitle" FontSize="20" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/>
+                <TextBlock x:Name="HeaderSub" Classes="muted" FontSize="12"/>
+            </StackPanel>
+            <CheckBox Grid.Column="1" x:Name="SelectAllCheck" Content="全选" Foreground="{StaticResource TextBrush}" FontSize="12" VerticalAlignment="Center"/>
+        </Grid>
+
+        <Border Grid.Row="1" Height="1" Background="{StaticResource BorderBrush2}" Margin="0,12,0,0"/>
+
+        <ScrollViewer Grid.Row="2" Margin="0,12,0,0">
+            <StackPanel x:Name="ListPanel" Spacing="4"/>
+        </ScrollViewer>
+
+        <Border Grid.Row="3" Height="1" Background="{StaticResource BorderBrush2}" Margin="0,12,0,0"/>
+
+        <Grid Grid.Row="4" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="SelectionLabel" FontSize="12" Foreground="{StaticResource TextBrush}" VerticalAlignment="Center" Text="未选中"/>
+            <TextBlock Grid.Column="1" x:Name="FooterHint" Classes="muted" FontSize="11" VerticalAlignment="Center" Margin="12,0,0,0" Text="勾选后选择目标渠道，点「迁移选中」"/>
+            <Button Grid.Column="2" x:Name="DeleteBtn" Content="删除选中" MinWidth="100" Margin="0,0,8,0" Click="OnDelete" IsEnabled="False"/>
+            <TextBlock Grid.Column="3" Text="迁移到:" Classes="muted" FontSize="11" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <ComboBox Grid.Column="4" x:Name="TargetCombo" Width="160" SelectedIndex="-1"/>
+            <Button Grid.Column="5" Content="迁移选中" MinWidth="100" Margin="8,0,0,0" Click="OnMove" IsEnabled="False" x:Name="MoveBtn"/>
+            <Button Grid.Column="6" Content="关闭" MinWidth="80" Margin="8,0,0,0" Click="OnClose"/>
+        </Grid>
+    </Grid>
+</Window>

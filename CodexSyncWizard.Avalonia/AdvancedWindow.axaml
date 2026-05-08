@@ -1,0 +1,90 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="CodexSyncWizard.Avalonia.AdvancedWindow"
+        Title="高级"
+        Width="600" Height="780"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner"
+        Icon="/app.ico">
+
+    <Grid Margin="20,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" Classes="section" Text="后台监听 (cc-switch / config.toml 切换)"/>
+
+        <Border Grid.Row="1" Background="{StaticResource HighlightPanelBrush}" BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" CornerRadius="2" Padding="12,10" Margin="0,8,0,0">
+            <StackPanel Spacing="6">
+                <TextBlock x:Name="WatchHint" Classes="tiny" TextWrapping="Wrap" Text=""/>
+                <CheckBox x:Name="AutoWatchCheck" Content="开启后台监听（关闭主窗口最小化到托盘）" Foreground="{StaticResource TextBrush}" FontSize="12"/>
+                <CheckBox x:Name="AutoMergeCheck" Content="检测到 model_provider 切换时自动合并对话" Foreground="{StaticResource TextBrush}" FontSize="12"/>
+            </StackPanel>
+        </Border>
+
+        <Border Grid.Row="2" Height="1" Background="{StaticResource BorderBrush2}" Margin="0,16,0,0"/>
+
+        <TextBlock Grid.Row="3" Classes="section" Text="智能还原" Margin="0,14,0,0"/>
+
+        <Border Grid.Row="4" Background="{StaticResource HighlightPanelBrush}" BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" CornerRadius="2" Padding="12,10" Margin="0,8,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="SmartRestoreInfo" Classes="tiny" Text="扫描中..." TextWrapping="Wrap" VerticalAlignment="Center"/>
+                <Button x:Name="SmartRestoreBtn" Grid.Column="1" Content="一键还原" MinWidth="124" Margin="12,0,0,0" Click="OnSmartRestore" IsEnabled="False"/>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="5" Height="1" Background="{StaticResource BorderBrush2}" Margin="0,16,0,0"/>
+
+        <TextBlock Grid.Row="6" Classes="section" Text="手动输入渠道名" Margin="0,14,0,0"/>
+
+        <Grid Grid.Row="7" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBox x:Name="ManualInput" Watermark="例如：sub2api"/>
+            <Button Grid.Column="1" Content="使用" MinWidth="124" Margin="12,0,0,0" Click="OnUseManual"/>
+        </Grid>
+
+        <Border Grid.Row="8" Height="1" Background="{StaticResource BorderBrush2}" Margin="0,16,0,0"/>
+
+        <TextBlock Grid.Row="9" Classes="section" Text="备份列表" Margin="0,14,0,0"/>
+
+        <ListBox Grid.Row="10" x:Name="BackupList" Height="160" Margin="0,8,0,0"/>
+
+        <Grid Grid.Row="11" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Button Content="打开目录" MinWidth="90" Click="OnOpenBackupDir"/>
+            <Button Grid.Column="1" Content="还原此份" MinWidth="100" Margin="8,0,0,0" Click="OnRestoreSingle"/>
+            <Button Grid.Column="3" Content="关闭" MinWidth="90" Click="OnClose"/>
+        </Grid>
+
+        <Border Grid.Row="13" x:Name="LogBoxWrapper" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" CornerRadius="2" Margin="0,12,0,0" IsVisible="False">
+            <ScrollViewer x:Name="LogScroll" VerticalScrollBarVisibility="Auto">
+                <TextBlock x:Name="LogBox" FontFamily="Consolas, Menlo, monospace" FontSize="11" Padding="8,6" TextWrapping="Wrap"/>
+            </ScrollViewer>
+        </Border>
+    </Grid>
+</Window>
