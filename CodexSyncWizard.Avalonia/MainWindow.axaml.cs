@@ -168,6 +168,126 @@ public partial class MainWindow : Window
             cards.Add(MakeProviderCard(p));
 
         ProvidersWrap.ItemsSource = cards;
+
+        UpdateConsolidatePanel();
+    }
+
+    private void UpdateConsolidatePanel()
+    {
+        if (_scan == null) return;
+        var providers = _scan.Providers.Keys.OrderBy(x => x).ToList();
+        var keepSelection = ConsolidateTarget.SelectedItem as string;
+        ConsolidateTarget.SelectionChanged -= OnConsolidateTargetChanged;
+        ConsolidateTarget.ItemsSource = providers;
+        if (!string.IsNullOrEmpty(keepSelection) && providers.Contains(keepSelection))
+            ConsolidateTarget.SelectedItem = keepSelection;
+        else if (!string.IsNullOrEmpty(_currentProvider) && providers.Contains(_currentProvider))
+            ConsolidateTarget.SelectedItem = _currentProvider;
+        else if (providers.Count > 0)
+            ConsolidateTarget.SelectedIndex = 0;
+        ConsolidateTarget.SelectionChanged += OnConsolidateTargetChanged;
+        UpdateConsolidatePlanText();
+    }
+
+    private void OnConsolidateTargetChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        UpdateConsolidatePlanText();
+    }
+
+    private void UpdateConsolidatePlanText()
+    {
+        var target = ConsolidateTarget.SelectedItem as string;
+        if (string.IsNullOrEmpty(target) || _scan == null)
+        {
+            ConsolidatePlan.Text = "";
+            ConsolidateBtn.IsEnabled = false;
+            return;
+        }
+        int otherCount = 0;
+        foreach (var p in _scan.Providers.Values)
+            if (p.Name != target) otherCount += p.TotalCount;
+        if (otherCount == 0)
+        {
+            ConsolidatePlan.Text = "（已经全在该渠道下）";
+            ConsolidateBtn.IsEnabled = false;
+        }
+        else
+        {
+            ConsolidatePlan.Text = $"将合并 {otherCount} 个对话";
+            ConsolidateBtn.IsEnabled = true;
+        }
+    }
+
+    private async void OnConsolidate(object? sender, RoutedEventArgs e)
+    {
+        var target = ConsolidateTarget.SelectedItem as string;
+        if (string.IsNullOrEmpty(target) || _scan == null) return;
+
+        var paths = new List<string>();
+        var unregistered = new List<string>();
+        var seenCwd = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var p in _scan.Providers.Values)
+        {
+            if (p.Name == target) continue;
+            var convs = ConversationBrowser.ListByProvider(_codexHome, p.Name);
+            foreach (var c in convs)
+            {
+                if (string.IsNullOrEmpty(c.FilePath)) continue;
+                paths.Add(c.FilePath);
+                if (!string.IsNullOrEmpty(c.Cwd))
+                {
+                    var key = WorkspaceRegistryService.Normalize(c.Cwd).ToLowerInvariant();
+                    if (seenCwd.Add(key) && !WorkspaceRegistryService.IsRegistered(_codexHome, c.Cwd))
+                        unregistered.Add(c.Cwd);
+                }
+            }
+        }
+        if (paths.Count == 0) return;
+
+        var msg = $"把所有非「{target}」的 {paths.Count} 个对话合并到「{target}」？\n会先自动备份。";
+        if (unregistered.Count > 0)
+            msg += $"\n\n顺便会把 {unregistered.Count} 个未登记的项目加入 Codex 工作区列表。";
+        var ok = await Dialogs.ConfirmAsync(this, "确认归并", msg);
+        if (!ok) return;
+
+        ConsolidateBtn.IsEnabled = false;
+        try
+        {
+            var home = _codexHome;
+            var t = target;
+            var result = await Task.Run(() => SessionSyncer.SyncSpecificFiles(home, paths, t));
+
+            int wsAdded = 0, wsBlocked = 0;
+            foreach (var cwd in unregistered)
+            {
+                var clean = WorkspaceRegistryService.Normalize(cwd);
+                if (!Directory.Exists(clean))
+                    try { Directory.CreateDirectory(clean); } catch { }
+                var r = WorkspaceRegistryService.AddWorkspace(home, cwd, out _);
+                if (r == WorkspaceRegistryService.AddResult.Added) wsAdded++;
+                else if (r == WorkspaceRegistryService.AddResult.CodexRunning) wsBlocked++;
+            }
+
+            var extras = new List<string> { $"改 {result.RolloutFilesSynced} 个对话 / {result.SqliteRowsSynced} 条数据库" };
+            if (wsAdded > 0) extras.Add($"加入 {wsAdded} 个项目到工作区");
+            if (wsBlocked > 0) extras.Add($"⚠ {wsBlocked} 个项目未加入（Codex Desktop 在跑）");
+
+            await Dialogs.InfoAsync(this, "完成",
+                "全部归并完成！\n\n" + string.Join("\n", extras) + "\n\n备份：" + result.BackupPath);
+            await DetectAsync();
+        }
+        catch (SqliteLockedException ex)
+        {
+            await Dialogs.InfoAsync(this, "Codex 客户端正在运行", ex.Message);
+        }
+        catch (Exception ex)
+        {
+            await Dialogs.InfoAsync(this, "错误", ex.Message);
+        }
+        finally
+        {
+            UpdateConsolidatePlanText();
+        }
     }
 
     private Border MakeProviderCard(ProviderInfo info)
@@ -341,6 +461,20 @@ public partial class MainWindow : Window
         };
 
         return border;
+    }
+
+    private async void OnBulk(object? sender, RoutedEventArgs e)
+    {
+        var dlg = new BulkOperationsWindow(_codexHome);
+        await dlg.ShowDialog(this);
+        if (dlg.DataChanged) await DetectAsync();
+    }
+
+    private async void OnCommand(object? sender, RoutedEventArgs e)
+    {
+        var dlg = new CommandPaletteWindow();
+        await dlg.ShowDialog(this);
+        await DetectAsync();
     }
 
     private async void OnAdvanced(object? sender, RoutedEventArgs e)

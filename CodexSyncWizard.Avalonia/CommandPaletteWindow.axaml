@@ -1,0 +1,60 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="CodexSyncWizard.Avalonia.CommandPaletteWindow"
+        Title="命令面板"
+        Width="900" Height="600"
+        CanResize="True"
+        WindowStartupLocation="CenterOwner"
+        Icon="/app.ico">
+
+    <Grid Margin="20,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Spacing="2">
+            <TextBlock Text="命令面板" FontSize="20" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/>
+            <TextBlock Text="跟终端一样跑 codex-sync 子命令；交互式命令请加 --yes" Classes="muted" FontSize="11"/>
+        </StackPanel>
+
+        <Border Grid.Row="1" Height="1" Background="{StaticResource BorderBrush2}" Margin="0,12,0,0"/>
+
+        <Grid Grid.Row="2" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock Grid.Column="0" Text="$ codex-sync " FontFamily="Consolas, Menlo, monospace" Foreground="{StaticResource MutedBrush}" VerticalAlignment="Center"/>
+            <TextBox Grid.Column="1" x:Name="CmdInput" FontFamily="Consolas, Menlo, monospace" Watermark="例如: scan 或 migrate --from openai --to custom --yes"/>
+            <Button Grid.Column="2" Content="执行" MinWidth="80" Margin="8,0,0,0" Click="OnExecute" Classes="primary"/>
+        </Grid>
+
+        <ScrollViewer Grid.Row="3" Margin="0,10,0,0" HorizontalScrollBarVisibility="Disabled">
+            <WrapPanel x:Name="QuickPanel" Orientation="Horizontal"/>
+        </ScrollViewer>
+
+        <Border Grid.Row="4" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" CornerRadius="4" Margin="0,10,0,0">
+            <ScrollViewer x:Name="OutScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                <TextBlock x:Name="OutBox" FontFamily="Consolas, Menlo, monospace" FontSize="12" Padding="10,8" TextWrapping="NoWrap"/>
+            </ScrollViewer>
+        </Border>
+
+        <Grid Grid.Row="5" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <TextBlock x:Name="HintLabel" Classes="muted" FontSize="11" VerticalAlignment="Center" Text="↑↓ 切换历史"/>
+            <Button Grid.Column="2" Content="清空输出" MinWidth="80" Click="OnClear"/>
+            <Button Grid.Column="3" Content="关闭" MinWidth="80" Margin="8,0,0,0" Click="OnClose"/>
+        </Grid>
+    </Grid>
+</Window>

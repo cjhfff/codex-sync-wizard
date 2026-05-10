@@ -15,6 +15,7 @@
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -54,8 +55,29 @@
         <!-- Status text -->
         <TextBlock Grid.Row="3" x:Name="StatusLabel" Classes="muted" Margin="0,16,0,0" Text="扫描中..." FontSize="12"/>
 
+        <!-- 一键归并 hero 面板 -->
+        <Border Grid.Row="4" x:Name="ConsolidatePanel" Background="{StaticResource HighlightPanelBrush}" BorderBrush="{StaticResource BorderBrush2}" BorderThickness="1" CornerRadius="8" Padding="20,16" Margin="0,14,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Spacing="6" VerticalAlignment="Center">
+                    <TextBlock Text="一键归并到主渠道" FontSize="14" FontWeight="Bold" Foreground="{StaticResource AccentBrush}"/>
+                    <Grid ColumnDefinitions="Auto,Auto,Auto,*">
+                        <TextBlock Text="把所有对话归到:" Foreground="{StaticResource MutedBrush}" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <ComboBox Grid.Column="1" x:Name="ConsolidateTarget" Width="180" SelectedIndex="-1"/>
+                        <TextBlock Grid.Column="2" x:Name="ConsolidatePlan" Foreground="{StaticResource MutedBrush}" FontSize="11" VerticalAlignment="Center" Margin="12,0,0,0"/>
+                    </Grid>
+                </StackPanel>
+
+                <Button Grid.Column="1" x:Name="ConsolidateBtn" Classes="primary" Content="一键归并" MinWidth="120" Click="OnConsolidate" IsEnabled="False" VerticalAlignment="Center" Margin="16,0,0,0"/>
+            </Grid>
+        </Border>
+
         <!-- Provider cards -->
-        <ScrollViewer Grid.Row="4" Margin="0,12,0,0" HorizontalScrollBarVisibility="Disabled">
+        <ScrollViewer Grid.Row="5" Margin="0,12,0,0" HorizontalScrollBarVisibility="Disabled">
             <ItemsControl x:Name="ProvidersWrap">
                 <ItemsControl.ItemsPanel>
                     <ItemsPanelTemplate>
@@ -66,14 +88,18 @@
         </ScrollViewer>
 
         <!-- Footer -->
-        <Grid Grid.Row="5" Margin="0,16,0,0">
+        <Grid Grid.Row="6" Margin="0,16,0,0">
             <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
             <Button Classes="link" Content="高级" Click="OnAdvanced"/>
-            <Button x:Name="UpdateLink" Grid.Column="2" Classes="link" Content="" IsVisible="False" Click="OnUpdateLink"/>
+            <Button Classes="link" Content="批量" Margin="16,0,0,0" Click="OnBulk"/>
+            <Button Classes="link" Content="命令" Margin="16,0,0,0" Click="OnCommand"/>
+            <Button x:Name="UpdateLink" Grid.Column="4" Classes="link" Content="" IsVisible="False" Click="OnUpdateLink"/>
         </Grid>
     </Grid>
 </Window>

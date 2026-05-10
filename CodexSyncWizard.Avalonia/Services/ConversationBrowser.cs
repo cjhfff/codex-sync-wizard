@@ -12,7 +12,27 @@ public record ConversationInfo(
     string? Cwd,
     string? Model,
     int Turns,
-    long FileSize);
+    long FileSize,
+    string? Source = null);
+
+public static class SourceCategory
+{
+    public const string Desktop = "Desktop";
+    public const string Cli = "CLI";
+    public const string Exec = "exec";
+    public const string Subagent = "子 agent";
+    public const string Unknown = "其他";
+
+    public static string Categorize(string? raw)
+    {
+        if (string.IsNullOrEmpty(raw)) return Unknown;
+        if (raw == "vscode") return Desktop;
+        if (raw == "cli") return Cli;
+        if (raw == "exec") return Exec;
+        if (raw.StartsWith("{") && raw.Contains("subagent")) return Subagent;
+        return Unknown;
+    }
+}
 
 public static class ConversationBrowser
 {
@@ -34,7 +54,8 @@ public static class ConversationBrowser
                 byPath[c.FilePath] = new ConversationInfo(
                     c.FilePath, c.Provider, existing.Timestamp ?? c.Timestamp,
                     existing.Title, existing.FirstUserMessage ?? c.FirstUserMessage,
-                    existing.Cwd ?? c.Cwd, existing.Model, c.Turns, c.FileSize);
+                    existing.Cwd ?? c.Cwd, existing.Model, c.Turns, c.FileSize,
+                    existing.Source ?? c.Source);
             }
             else
             {
@@ -57,7 +78,7 @@ public static class ConversationBrowser
             conn.Open();
             using var cmd = conn.CreateCommand();
             cmd.CommandText = @"
-SELECT rollout_path, title, first_user_message, cwd, model, created_at_ms
+SELECT rollout_path, title, first_user_message, cwd, model, created_at_ms, source
 FROM threads
 WHERE model_provider = @p
 ORDER BY created_at_ms DESC";
@@ -71,11 +92,12 @@ ORDER BY created_at_ms DESC";
                 var cwd = r.IsDBNull(3) ? null : r.GetString(3);
                 var model = r.IsDBNull(4) ? null : r.GetString(4);
                 var ts = r.IsDBNull(5) ? (long?)null : r.GetInt64(5);
+                var source = r.IsDBNull(6) ? null : r.GetString(6);
                 DateTime? dt = ts == null ? null : DateTimeOffset.FromUnixTimeMilliseconds(ts.Value).LocalDateTime;
                 long size = 0;
                 if (!string.IsNullOrEmpty(path) && File.Exists(path))
                     try { size = new FileInfo(path).Length; } catch { }
-                result.Add(new ConversationInfo(path, provider, dt, title, firstMsg, cwd, model, 0, size));
+                result.Add(new ConversationInfo(path, provider, dt, title, firstMsg, cwd, model, 0, size, source));
             }
         }
         catch { }

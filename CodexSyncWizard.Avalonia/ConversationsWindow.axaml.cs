@@ -25,12 +25,21 @@ public partial class ConversationsWindow : Window
 
     public ConversationsWindow() { InitializeComponent(); }
 
+    private string _sourceFilter = "全部";
+
     public ConversationsWindow(string codexHome, string provider, IEnumerable<string> allProviders) : this()
     {
         _codexHome = codexHome;
         _provider = provider;
 
         TargetCombo.ItemsSource = allProviders.Where(p => p != provider).ToList();
+
+        SourceFilter.ItemsSource = new[] { "全部", SourceCategory.Desktop, SourceCategory.Cli, SourceCategory.Exec, SourceCategory.Subagent, SourceCategory.Unknown };
+        SourceFilter.SelectionChanged += (_, _) =>
+        {
+            _sourceFilter = (SourceFilter.SelectedItem as string) ?? "全部";
+            RebuildList();
+        };
 
         SelectAllCheck.IsCheckedChanged += (_, _) =>
         {
@@ -65,8 +74,16 @@ public partial class ConversationsWindow : Window
         var home = _codexHome;
         var prov = _provider;
         await Task.Run(() => { _all = ConversationBrowser.ListByProvider(home, prov); });
+        RebuildList();
+    }
 
-        var groups = _all
+    private void RebuildList()
+    {
+        var filtered = _sourceFilter == "全部"
+            ? _all
+            : _all.Where(c => SourceCategory.Categorize(c.Source) == _sourceFilter).ToList();
+
+        var groups = filtered
             .GroupBy(c => NormalizeCwd(c.Cwd))
             .Select(g =>
             {
@@ -77,18 +94,25 @@ public partial class ConversationsWindow : Window
             .OrderByDescending(g => g.Items.Max(c => c.Timestamp ?? DateTime.MinValue))
             .ToList();
 
-        HeaderSub.Text = $"共 {_all.Count} 个对话，分布在 {groups.Count} 个项目";
+        var sourceCounts = _all
+            .GroupBy(c => SourceCategory.Categorize(c.Source))
+            .ToDictionary(g => g.Key, g => g.Count());
+        var dist = string.Join(" / ", sourceCounts.OrderByDescending(k => k.Value)
+            .Select(kv => $"{kv.Key} {kv.Value}"));
+
+        var filterNote = _sourceFilter == "全部" ? "" : $"  ·  过滤: {_sourceFilter}（{filtered.Count}）";
+        HeaderSub.Text = $"共 {_all.Count} 个 = {dist}{filterNote}";
 
         ListPanel.Children.Clear();
         _rowChecks.Clear();
         _groups.Clear();
         _selected.Clear();
 
-        if (_all.Count == 0)
+        if (filtered.Count == 0)
         {
             ListPanel.Children.Add(new TextBlock
             {
-                Text = "（该渠道下没有对话）",
+                Text = _sourceFilter == "全部" ? "（该渠道下没有对话）" : $"（该渠道下没有 {_sourceFilter} 来源的对话）",
                 Classes = { "muted" },
                 Margin = new Thickness(0, 8, 0, 0)
             });
@@ -318,6 +342,8 @@ public partial class ConversationsWindow : Window
         var metaParts = new List<string>();
         if (c.Timestamp != null) metaParts.Add(c.Timestamp.Value.ToString("yyyy-MM-dd HH:mm"));
         if (!string.IsNullOrEmpty(c.Model)) metaParts.Add(c.Model!);
+        var sourceLabel = SourceCategory.Categorize(c.Source);
+        metaParts.Add(sourceLabel);
         stack.Children.Add(new TextBlock
         {
             Text = string.Join("  ·  ", metaParts),

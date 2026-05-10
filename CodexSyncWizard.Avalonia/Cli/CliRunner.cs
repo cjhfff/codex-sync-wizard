@@ -18,6 +18,55 @@ public static class CliRunner
         }
     }
 
+    public static int RunInProcess(string[] args, TextWriter output, TextWriter? errors = null)
+    {
+        var oldOut = Console.Out;
+        var oldErr = Console.Error;
+        Console.SetOut(output);
+        Console.SetError(errors ?? output);
+        try { return Dispatch(args); }
+        catch (Exception ex) { output.WriteLine("Error: " + ex.Message); return 1; }
+        finally
+        {
+            Console.SetOut(oldOut);
+            Console.SetError(oldErr);
+        }
+    }
+
+    public static string[] SplitCommandLine(string input)
+    {
+        var result = new List<string>();
+        var current = new System.Text.StringBuilder();
+        bool inQuote = false;
+        char quoteChar = '"';
+        foreach (var ch in input)
+        {
+            if (inQuote)
+            {
+                if (ch == quoteChar) inQuote = false;
+                else current.Append(ch);
+            }
+            else
+            {
+                if (ch == '"' || ch == '\'') { inQuote = true; quoteChar = ch; }
+                else if (char.IsWhiteSpace(ch))
+                {
+                    if (current.Length > 0) { result.Add(current.ToString()); current.Clear(); }
+                }
+                else current.Append(ch);
+            }
+        }
+        if (current.Length > 0) result.Add(current.ToString());
+        // 第一段如果是程序名（codex-sync 或 exe 路径），剥掉
+        if (result.Count > 0)
+        {
+            var first = result[0].ToLowerInvariant();
+            if (first.EndsWith(".exe") || first == "codex-sync" || first == "codexsyncwizard")
+                result.RemoveAt(0);
+        }
+        return result.ToArray();
+    }
+
     private static int Dispatch(string[] args)
     {
         if (args.Length == 0 || args[0] is "help" or "-h" or "--help")
