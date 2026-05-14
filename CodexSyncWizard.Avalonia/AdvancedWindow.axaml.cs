@@ -99,7 +99,12 @@ public partial class AdvancedWindow : Window
 
     private void LoadBackups()
     {
-        _backups = LegacyBackupService.ListAll(_codexHome);
+        // 把原始备份排在最上面 (LegacyBackupService 按时间倒序, 我们手动把 _original 提到顶部)
+        var raw = LegacyBackupService.ListAll(_codexHome);
+        _backups = raw
+            .OrderByDescending(b => BackupService.IsOriginalBackup(b.Path))
+            .ThenByDescending(b => b.CreatedAt)
+            .ToList();
         BackupList.Items.Clear();
 
         if (_backups.Count == 0)
@@ -110,6 +115,11 @@ public partial class AdvancedWindow : Window
         {
             foreach (var b in _backups)
             {
+                if (BackupService.IsOriginalBackup(b.Path))
+                {
+                    BackupList.Items.Add($"🛡 原始备份  ({b.CreatedAt:MM-dd HH:mm})  · 工具首次启动时创建, 永不自动清理");
+                    continue;
+                }
                 var time = b.CreatedAt.ToString("MM-dd HH:mm");
                 var fmt = b.Format == BackupFormat.Compact ? "紧凑" : "完整";
                 var target = string.IsNullOrEmpty(b.TargetProvider) ? "" : $"  → {b.TargetProvider}";

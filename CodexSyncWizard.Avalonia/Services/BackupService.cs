@@ -16,6 +16,9 @@ public static class BackupService
 
     public static string CreateBackup(string codexHome)
     {
+        // 先保命底: 第一次操作前自动留一份原始备份, 永不删除
+        EnsureOriginalBackup(codexHome);
+
         var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
         var backupDir = Path.Combine(codexHome, BackupSubDir, timestamp);
         Directory.CreateDirectory(backupDir);
@@ -37,6 +40,61 @@ public static class BackupService
 
         return backupDir;
     }
+
+    /// <summary>
+    /// 原始备份目录名 — 下划线前缀确保 ListBackups 排序 / 视觉上区别于常规备份。
+    /// PruneBackups 也是按这个前缀豁免。
+    /// </summary>
+    public const string OriginalBackupName = "_original";
+
+    /// <summary>
+    /// 保命底备份: 工具首次接触某个 codex home 时, 在客户做任何 sync/delete 操作前先备份一份。
+    /// 永不被 PruneBackups 删除。已存在则跳过 (idempotent)。
+    /// 返回值: true 表示这次新创建; false 表示已存在/创建失败跳过。
+    /// </summary>
+    public static bool EnsureOriginalBackup(string codexHome)
+    {
+        var origDir = Path.Combine(codexHome, BackupSubDir, OriginalBackupName);
+        if (Directory.Exists(origDir)) return false; // 已经有了, 不动
+
+        try
+        {
+            Directory.CreateDirectory(origDir);
+
+            var sqlitePath = Path.Combine(codexHome, "state_5.sqlite");
+            if (File.Exists(sqlitePath))
+            {
+                CheckpointSqlite(sqlitePath);
+                File.Copy(sqlitePath, Path.Combine(origDir, "state_5.sqlite"));
+            }
+
+            var configPath = Path.Combine(codexHome, "config.toml");
+            if (File.Exists(configPath))
+                File.Copy(configPath, Path.Combine(origDir, "config.toml"));
+
+            BackupRolloutFiles(codexHome, "sessions", origDir);
+            BackupRolloutFiles(codexHome, "archived_sessions", origDir);
+
+            // 标记文件 — UI 可以读这个来识别原始备份
+            File.WriteAllText(Path.Combine(origDir, ".original-backup-marker"),
+                $"created_at: {DateTime.Now:yyyy-MM-dd HH:mm:ss}\n" +
+                "note: 工具首次启动时自动创建。这是保命底，永远不会被自动清理。\n" +
+                "如果你确认要释放空间，可以手动删除整个 _original 目录。");
+
+            return true;
+        }
+        catch
+        {
+            // 失败不阻塞业务, 删掉可能产生的半成品
+            try { if (Directory.Exists(origDir)) Directory.Delete(origDir, recursive: true); } catch { }
+            return false;
+        }
+    }
+
+    /// <summary>检查指定 backupDir 是否是原始备份</summary>
+    public static bool IsOriginalBackup(string backupDir)
+        => Path.GetFileName(backupDir) == OriginalBackupName ||
+           File.Exists(Path.Combine(backupDir, ".original-backup-marker"));
 
     private static void CheckpointSqlite(string sqlitePath)
     {
@@ -213,7 +271,10 @@ public static class BackupService
 
     public static void PruneBackups(string codexHome, int keepCount = 2)
     {
-        var backups = ListBackups(codexHome);
+        // 原始备份 (_original) 永不进入修剪集合
+        var backups = ListBackups(codexHome)
+            .Where(d => !IsOriginalBackup(d))
+            .ToList();
         foreach (var old in backups.Skip(keepCount))
         {
             try { Directory.Delete(old, recursive: true); } catch { }

@@ -150,6 +150,9 @@ public partial class MainWindow : Window
         {
             await Task.Run(() =>
             {
+                // 保命底: 工具首次接触这个 codex home 时做一份原始备份, 永不删除。
+                // 已存在则 idempotent 跳过, 失败也不阻塞扫描。
+                BackupService.EnsureOriginalBackup(_codexHome);
                 _scan = ProviderScanner.Scan(_codexHome);
                 _currentProvider = ConfigService.ReadProvider(_codexHome);
             });
