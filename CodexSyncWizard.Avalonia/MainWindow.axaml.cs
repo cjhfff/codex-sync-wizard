@@ -295,6 +295,8 @@ public partial class MainWindow : Window
                 ? await Task.Run(() => WorkspaceRegistryService.AddWorkspaces(home, unregistered))
                 : new WorkspaceRegistryService.BatchAddResult(0, 0, 0, null);
 
+            await Dialogs.WarnIfPartialSyncAsync(this, result);
+
             var extras = new List<string> { $"改 {result.RolloutFilesSynced} 个对话 / {result.SqliteRowsSynced} 条数据库" };
             if (batch.Added > 0) extras.Add($"加入 {batch.Added} 个项目到工作区");
             if (batch.AlreadyExists > 0) extras.Add($"{batch.AlreadyExists} 个项目已存在，跳过");
@@ -303,6 +305,10 @@ public partial class MainWindow : Window
             await Dialogs.InfoAsync(this, "完成",
                 "全部归并完成！\n\n" + string.Join("\n", extras) + "\n\n备份：" + result.BackupPath);
             await DetectAsync();
+        }
+        catch (ProviderNotDefinedException ex)
+        {
+            await Dialogs.ShowProviderNotDefinedAsync(this, ex);
         }
         catch (SqliteLockedException ex)
         {

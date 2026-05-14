@@ -197,10 +197,28 @@ public partial class App : Application
 
             var result = await Task.Run(() =>
                 SessionSyncer.Sync(home, newProvider, false, SyncMode.MergeToTarget));
-            ShowNotification($"已自动同步到 {newProvider}",
-                $"{result.RolloutFilesSynced} 个对话 / {result.SqliteRowsSynced} 条记录已合并。");
+            if (!string.IsNullOrEmpty(result.SqliteError))
+            {
+                ShowNotification($"自动同步半成功 — {newProvider}",
+                    $"对话改了 {result.RolloutFilesSynced} 个，但数据库写入失败 ({result.SqliteError})。Codex 可能仍看不到。");
+            }
+            else if (result.RolloutFilesSynced > 0 && result.SqliteRowsSynced == 0)
+            {
+                ShowNotification($"自动同步提醒 — {newProvider}",
+                    $"{result.RolloutFilesSynced} 个对话已改，但数据库 0 条更新。");
+            }
+            else
+            {
+                ShowNotification($"已自动同步到 {newProvider}",
+                    $"{result.RolloutFilesSynced} 个对话 / {result.SqliteRowsSynced} 条记录已合并。");
+            }
             UpdateTrayStatus();
             Dispatcher.UIThread.Post(() => _mainWindow?.RequestRefresh());
+        }
+        catch (ProviderNotDefinedException ex)
+        {
+            ShowNotification("自动同步未执行 — provider 未定义",
+                $"目标「{ex.ProviderName}」在 config.toml 里没找到。请先在 config 里加上对应的 [model_providers.{ex.ProviderName}] 段。");
         }
         catch (Exception ex)
         {

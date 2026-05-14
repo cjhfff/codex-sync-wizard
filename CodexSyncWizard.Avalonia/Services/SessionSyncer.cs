@@ -11,7 +11,12 @@ public enum SyncMode
     KeepOthers
 }
 
-public record SyncResult(int RolloutFilesSynced, int SqliteRowsSynced, string BackupPath, bool Cancelled = false);
+public record SyncResult(
+    int RolloutFilesSynced,
+    int SqliteRowsSynced,
+    string BackupPath,
+    bool Cancelled = false,
+    string? SqliteError = null);
 
 public record PreviewResult(List<string> FilesToChange, int SqliteRowsToChange, Dictionary<string, int> CurrentDistribution);
 
@@ -24,6 +29,20 @@ public class SqliteLockedException : Exception
 {
     public SqliteLockedException()
         : base("数据库被占用 — 请先关闭 Codex 客户端再试") { }
+}
+
+public class ProviderNotDefinedException : Exception
+{
+    public string ProviderName { get; }
+    public List<string> CaseMismatches { get; }
+    public List<string> AllDefined { get; }
+    public ProviderNotDefinedException(string providerName, List<string> caseMismatches, List<string> allDefined)
+        : base($"目标 provider「{providerName}」在 config.toml 里没定义")
+    {
+        ProviderName = providerName;
+        CaseMismatches = caseMismatches;
+        AllDefined = allDefined;
+    }
 }
 
 public static class SessionSyncer
@@ -54,6 +73,22 @@ public static class SessionSyncer
         }
     }
 
+    /// <summary>
+    /// 校验目标 provider 是否在 config.toml 里定义。
+    /// 大小写不一致也算"没定义"——Codex 读 model_provider 时是大小写敏感的。
+    /// </summary>
+    public static void ValidateTargetProvider(string codexHome, string targetProvider)
+    {
+        var defined = ConfigService.ListDefinedProviders(codexHome);
+        if (defined.Count == 0) return; // config.toml 不存在或没定义任何 provider，跳过校验
+        if (defined.Contains(targetProvider)) return; // 严格匹配，OK
+
+        var caseMismatches = defined
+            .Where(p => string.Equals(p, targetProvider, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        throw new ProviderNotDefinedException(targetProvider, caseMismatches, defined);
+    }
+
     public static SyncResult Sync(string codexHome, string targetProvider, bool updateConfig,
         SyncMode mode = SyncMode.MergeToTarget,
         IProgress<string>? progress = null, CancellationToken ct = default)
@@ -61,12 +96,15 @@ public static class SessionSyncer
         if (IsCodexLikelyRunning(codexHome))
             throw new SqliteLockedException();
 
+        ValidateTargetProvider(codexHome, targetProvider);
+
         progress?.Report("正在备份...");
         var backupPath = BackupService.CreateBackup(codexHome);
         ct.ThrowIfCancellationRequested();
 
         int rolloutCount = 0;
         int sqliteCount = 0;
+        string? sqliteError = null;
 
         if (mode == SyncMode.MergeToTarget)
         {
@@ -75,7 +113,7 @@ public static class SessionSyncer
             rolloutCount += SyncRolloutDir(Path.Combine(codexHome, "archived_sessions"), targetProvider, ct);
 
             progress?.Report("正在更新数据库...");
-            sqliteCount = SyncSqlite(codexHome, targetProvider);
+            sqliteCount = SyncSqlite(codexHome, targetProvider, out sqliteError);
         }
         else if (mode == SyncMode.DeleteOthers)
         {
@@ -84,7 +122,7 @@ public static class SessionSyncer
             rolloutCount += DeleteOtherProviderRollouts(Path.Combine(codexHome, "archived_sessions"), targetProvider, ct);
 
             progress?.Report("正在删除数据库中非目标渠道的记录...");
-            sqliteCount = DeleteOtherProviderSqlite(codexHome, targetProvider);
+            sqliteCount = DeleteOtherProviderSqlite(codexHome, targetProvider, out sqliteError);
         }
         else
         {
@@ -101,7 +139,7 @@ public static class SessionSyncer
         BackupService.PruneBackups(codexHome);
 
         progress?.Report(mode == SyncMode.MergeToTarget ? "同步完成!" : "清理完成!");
-        return new SyncResult(rolloutCount, sqliteCount, backupPath);
+        return new SyncResult(rolloutCount, sqliteCount, backupPath, false, sqliteError);
     }
 
     private static int DeleteOtherProviderRollouts(string dir, string targetProvider, CancellationToken ct)
@@ -132,8 +170,9 @@ public static class SessionSyncer
         return count;
     }
 
-    private static int DeleteOtherProviderSqlite(string codexHome, string targetProvider)
+    private static int DeleteOtherProviderSqlite(string codexHome, string targetProvider, out string? error)
     {
+        error = null;
         var sqlitePath = Path.Combine(codexHome, "state_5.sqlite");
         if (!File.Exists(sqlitePath)) return 0;
 
@@ -144,12 +183,27 @@ public static class SessionSyncer
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "DELETE FROM threads WHERE model_provider != @target";
             cmd.Parameters.AddWithValue("@target", targetProvider);
-            return cmd.ExecuteNonQuery();
+            var count = cmd.ExecuteNonQuery();
+            CheckpointWal(conn);
+            return count;
         }
-        catch
+        catch (Exception ex)
         {
+            error = ex.Message;
             return 0;
         }
+    }
+
+    private static void CheckpointWal(SqliteConnection conn)
+    {
+        // 把 WAL 落到主库，避免 Codex Desktop 重启时读旧值
+        try
+        {
+            using var ck = conn.CreateCommand();
+            ck.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+            ck.ExecuteNonQuery();
+        }
+        catch { /* checkpoint 失败不致命，正常 close 时 SQLite 也会尝试 */ }
     }
 
     private static int SyncRolloutDir(string dir, string targetProvider, CancellationToken ct)
@@ -271,11 +325,11 @@ public static class SessionSyncer
         }
 
         progress?.Report("正在删除数据库记录...");
-        int sqliteCount = DeleteSqliteByIds(codexHome, threadIds);
+        int sqliteCount = DeleteSqliteByIds(codexHome, threadIds, out var sqliteError);
 
         BackupService.PruneBackups(codexHome);
         progress?.Report("删除完成!");
-        return new SyncResult(deleted, sqliteCount, backupPath);
+        return new SyncResult(deleted, sqliteCount, backupPath, false, sqliteError);
     }
 
     private static string? ReadThreadId(string filePath)
@@ -293,8 +347,9 @@ public static class SessionSyncer
         catch { return null; }
     }
 
-    private static int DeleteSqliteByIds(string codexHome, IList<string> threadIds)
+    private static int DeleteSqliteByIds(string codexHome, IList<string> threadIds, out string? error)
     {
+        error = null;
         var sqlitePath = Path.Combine(codexHome, "state_5.sqlite");
         if (!File.Exists(sqlitePath) || threadIds.Count == 0) return 0;
         try
@@ -312,9 +367,14 @@ public static class SessionSyncer
                 deleted += cmd.ExecuteNonQuery();
             }
             tx.Commit();
+            CheckpointWal(conn);
             return deleted;
         }
-        catch { return 0; }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return 0;
+        }
     }
 
     public static SyncResult SyncSpecificFiles(string codexHome, IList<string> filePaths,
@@ -322,6 +382,8 @@ public static class SessionSyncer
     {
         if (IsCodexLikelyRunning(codexHome))
             throw new SqliteLockedException();
+
+        ValidateTargetProvider(codexHome, targetProvider);
 
         progress?.Report("正在备份...");
         var backupPath = BackupService.CreateBackup(codexHome);
@@ -343,12 +405,12 @@ public static class SessionSyncer
         }
 
         progress?.Report("正在更新数据库...");
-        int sqliteCount = UpdateSqliteByIds(codexHome, threadIds, targetProvider);
+        int sqliteCount = UpdateSqliteByIds(codexHome, threadIds, targetProvider, out var sqliteError);
 
         BackupService.PruneBackups(codexHome);
 
         progress?.Report("迁移完成!");
-        return new SyncResult(rolloutCount, sqliteCount, backupPath);
+        return new SyncResult(rolloutCount, sqliteCount, backupPath, false, sqliteError);
     }
 
     private static string? SyncSingleFile(string filePath, string targetProvider)
@@ -382,8 +444,9 @@ public static class SessionSyncer
         }
     }
 
-    private static int UpdateSqliteByIds(string codexHome, IList<string> threadIds, string targetProvider)
+    private static int UpdateSqliteByIds(string codexHome, IList<string> threadIds, string targetProvider, out string? error)
     {
+        error = null;
         var sqlitePath = Path.Combine(codexHome, "state_5.sqlite");
         if (!File.Exists(sqlitePath) || threadIds.Count == 0) return 0;
 
@@ -403,16 +466,19 @@ public static class SessionSyncer
                 updated += cmd.ExecuteNonQuery();
             }
             tx.Commit();
+            CheckpointWal(conn);
             return updated;
         }
-        catch
+        catch (Exception ex)
         {
+            error = ex.Message;
             return 0;
         }
     }
 
-    private static int SyncSqlite(string codexHome, string targetProvider)
+    private static int SyncSqlite(string codexHome, string targetProvider, out string? error)
     {
+        error = null;
         var sqlitePath = Path.Combine(codexHome, "state_5.sqlite");
         if (!File.Exists(sqlitePath)) return 0;
 
@@ -423,10 +489,13 @@ public static class SessionSyncer
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "UPDATE threads SET model_provider = @target WHERE model_provider != @target";
             cmd.Parameters.AddWithValue("@target", targetProvider);
-            return cmd.ExecuteNonQuery();
+            var count = cmd.ExecuteNonQuery();
+            CheckpointWal(conn);
+            return count;
         }
-        catch
+        catch (Exception ex)
         {
+            error = ex.Message;
             return 0;
         }
     }

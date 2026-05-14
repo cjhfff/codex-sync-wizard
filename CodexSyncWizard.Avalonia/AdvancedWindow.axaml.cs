@@ -212,14 +212,28 @@ public partial class AdvancedWindow : Window
                 var result = await Task.Run(() => LegacyBackupService.RestoreCompact(home, info.Path, progress));
                 Log("");
                 Log($"完成 — {result.FilesRestored} 个对话 / 数据库 {result.SqliteRowsUpdated}");
+                RestoredSomething = true;
+                await Dialogs.InfoAsync(this, "完成", "完成，重启 Codex 客户端查看");
             }
             else
             {
-                await Task.Run(() => BackupService.RestoreBackup(home, info.Path));
-                Log("完成");
+                var restore = await Task.Run(() => BackupService.RestoreBackup(home, info.Path));
+                if (!restore.Success)
+                {
+                    Log("还原失败: " + restore.Error);
+                    await Dialogs.InfoAsync(this, "还原失败", restore.Error ?? "未知错误");
+                    return;
+                }
+                var parts = new List<string>();
+                if (restore.SqliteRestored) parts.Add("数据库 ✓");
+                if (restore.ConfigRestored) parts.Add("config.toml ✓");
+                parts.Add($"{restore.RolloutFilesRestored} 个对话");
+                Log("完成 — " + string.Join(" / ", parts));
+                RestoredSomething = true;
+                await Dialogs.InfoAsync(this, "完成",
+                    "还原完成。\n  · " + string.Join("\n  · ", parts) +
+                    "\n\n请彻底退出 Codex 客户端（含托盘）后重新打开，否则它内存里的缓存还是旧数据。");
             }
-            RestoredSomething = true;
-            await Dialogs.InfoAsync(this, "完成", "完成，重启 Codex 客户端查看");
             LoadBackups();
         }
         catch (Exception ex)

@@ -2,6 +2,13 @@ using Microsoft.Data.Sqlite;
 
 namespace CodexSyncWizard.Services;
 
+public record RestoreResult(
+    bool Success,
+    int RolloutFilesRestored,
+    bool SqliteRestored,
+    bool ConfigRestored,
+    string? Error);
+
 public static class BackupService
 {
     private const string BackupSubDir = "backups_state/provider-sync";
@@ -66,41 +73,91 @@ public static class BackupService
             .ToList();
     }
 
-    public static void RestoreBackup(string codexHome, string backupDir)
+    public static RestoreResult RestoreBackup(string codexHome, string backupDir)
     {
         if (SessionSyncer.IsCodexLikelyRunning(codexHome))
-            throw new SqliteLockedException();
+            return new RestoreResult(false, 0, false, false,
+                "Codex 客户端正在运行 — 请彻底关闭（含托盘 / Helper 进程）后再还原。否则旧数据库的 WAL 会覆盖刚还原的内容。");
 
-        var sqliteBackup = Path.Combine(backupDir, "state_5.sqlite");
-        if (File.Exists(sqliteBackup))
+        bool sqliteOk = false;
+        bool configOk = false;
+        int rolloutCount = 0;
+
+        try
         {
-            var current = Path.Combine(codexHome, "state_5.sqlite");
-            // 必须先删除 -wal/-shm，否则 SQLite 会把旧 WAL 重放到刚还原的文件上覆盖回去
-            try { File.Delete(current + "-wal"); } catch { }
-            try { File.Delete(current + "-shm"); } catch { }
-            File.Copy(sqliteBackup, current, overwrite: true);
+            var sqliteBackup = Path.Combine(backupDir, "state_5.sqlite");
+            if (File.Exists(sqliteBackup))
+            {
+                var current = Path.Combine(codexHome, "state_5.sqlite");
+                var walPath = current + "-wal";
+                var shmPath = current + "-shm";
+
+                // 必须先删除 -wal/-shm，否则 SQLite 会把旧 WAL 重放到刚还原的文件上覆盖回去。
+                // 删不掉就 hard fail —— 否则用户以为还原成功，下次 Codex 启动数据立刻被覆盖回旧值。
+                if (File.Exists(walPath))
+                {
+                    try { File.Delete(walPath); }
+                    catch (Exception ex)
+                    {
+                        return new RestoreResult(false, 0, false, false,
+                            $"无法删除旧的 SQLite WAL 文件 ({walPath}): {ex.Message}\n\n" +
+                            "通常是 Codex 仍在运行或文件被某个进程持有。" +
+                            "请打开任务管理器搜索 Codex / Electron 全部关掉后重试。");
+                    }
+                }
+                if (File.Exists(shmPath))
+                {
+                    try { File.Delete(shmPath); }
+                    catch (Exception ex)
+                    {
+                        return new RestoreResult(false, 0, false, false,
+                            $"无法删除旧的 SQLite SHM 文件 ({shmPath}): {ex.Message}");
+                    }
+                }
+
+                try { File.Copy(sqliteBackup, current, overwrite: true); }
+                catch (Exception ex)
+                {
+                    return new RestoreResult(false, 0, false, false,
+                        $"还原数据库失败: {ex.Message}\n\n" +
+                        "可能是文件被 Codex 占用。请彻底关闭 Codex 后重试。");
+                }
+                sqliteOk = true;
+            }
+
+            var configBackup = Path.Combine(backupDir, "config.toml");
+            if (File.Exists(configBackup))
+            {
+                File.Copy(configBackup, Path.Combine(codexHome, "config.toml"), overwrite: true);
+                configOk = true;
+            }
+
+            rolloutCount += RestoreRolloutFiles(codexHome, backupDir, "sessions");
+            rolloutCount += RestoreRolloutFiles(codexHome, backupDir, "archived_sessions");
+
+            return new RestoreResult(true, rolloutCount, sqliteOk, configOk, null);
         }
-
-        var configBackup = Path.Combine(backupDir, "config.toml");
-        if (File.Exists(configBackup))
-            File.Copy(configBackup, Path.Combine(codexHome, "config.toml"), overwrite: true);
-
-        RestoreRolloutFiles(codexHome, backupDir, "sessions");
-        RestoreRolloutFiles(codexHome, backupDir, "archived_sessions");
+        catch (Exception ex)
+        {
+            return new RestoreResult(false, rolloutCount, sqliteOk, configOk, ex.Message);
+        }
     }
 
-    private static void RestoreRolloutFiles(string codexHome, string backupDir, string subDir)
+    private static int RestoreRolloutFiles(string codexHome, string backupDir, string subDir)
     {
         var backupSubDir = Path.Combine(backupDir, subDir);
-        if (!Directory.Exists(backupSubDir)) return;
+        if (!Directory.Exists(backupSubDir)) return 0;
 
+        int count = 0;
         foreach (var file in Directory.EnumerateFiles(backupSubDir, "*.jsonl", SearchOption.AllDirectories))
         {
             var relativePath = Path.GetRelativePath(backupDir, file);
             var destPath = Path.Combine(codexHome, relativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
             File.Copy(file, destPath, overwrite: true);
+            count++;
         }
+        return count;
     }
 
     public static void PruneBackups(string codexHome, int keepCount = 2)

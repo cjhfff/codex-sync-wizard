@@ -98,8 +98,14 @@ public partial class BulkOperationsWindow : Window
             var result = await Task.Run(() => SessionSyncer.SyncSpecificFiles(home, paths, t, progress));
             Log($"完成: 改 {result.RolloutFilesSynced} 个对话 / {result.SqliteRowsSynced} 条数据库");
             Log($"备份: {result.BackupPath}");
+            await Dialogs.WarnIfPartialSyncAsync(this, result);
             DataChanged = true;
             Reload();
+        }
+        catch (ProviderNotDefinedException ex)
+        {
+            Log("✗ " + ex.Message);
+            await Dialogs.ShowProviderNotDefinedAsync(this, ex);
         }
         catch (SqliteLockedException ex)
         {

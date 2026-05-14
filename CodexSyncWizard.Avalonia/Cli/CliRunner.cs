@@ -307,7 +307,27 @@ public static class CliRunner
             var result = SessionSyncer.SyncSpecificFiles(home, sourcePaths, to!, progress);
             Console.WriteLine($"\n完成: 改 {result.RolloutFilesSynced} 个对话 / {result.SqliteRowsSynced} 条数据库记录");
             Console.WriteLine($"备份: {result.BackupPath}");
+            if (!string.IsNullOrEmpty(result.SqliteError))
+            {
+                Console.Error.WriteLine("\n⚠ 数据库写入失败: " + result.SqliteError);
+                Console.Error.WriteLine("Codex Desktop 列表主要看数据库 — 可能仍看不到迁移结果。");
+                Console.Error.WriteLine("请彻底关闭 Codex 后用 'codex-sync restore' 还原并重试。");
+                return 4;
+            }
+            if (result.RolloutFilesSynced > 0 && result.SqliteRowsSynced == 0)
+            {
+                Console.Error.WriteLine("\n⚠ 对话文件改了但数据库 0 条更新 — 可能 ID 不一致或 Codex 在跑。");
+            }
             return 0;
+        }
+        catch (ProviderNotDefinedException ex)
+        {
+            Console.Error.WriteLine("✗ " + ex.Message);
+            if (ex.CaseMismatches.Count > 0)
+                Console.Error.WriteLine("  大小写不一致，config.toml 里实际是: " + string.Join(", ", ex.CaseMismatches));
+            else if (ex.AllDefined.Count > 0)
+                Console.Error.WriteLine("  config.toml 里已定义: " + string.Join(", ", ex.AllDefined));
+            return 5;
         }
         catch (SqliteLockedException)
         {
@@ -447,8 +467,14 @@ public static class CliRunner
         }
         else
         {
-            BackupService.RestoreBackup(home, found.Path);
-            Console.WriteLine("完整备份还原完成");
+            var r = BackupService.RestoreBackup(home, found.Path);
+            if (!r.Success)
+            {
+                Console.Error.WriteLine("还原失败: " + r.Error);
+                return 1;
+            }
+            Console.WriteLine($"完整备份还原完成 — 数据库 {(r.SqliteRestored ? "✓" : "—")} / config.toml {(r.ConfigRestored ? "✓" : "—")} / {r.RolloutFilesRestored} 个对话");
+            Console.WriteLine("请彻底退出 Codex 客户端 (含托盘) 后重新打开。");
         }
         return 0;
     }

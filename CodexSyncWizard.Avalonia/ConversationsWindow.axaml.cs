@@ -552,9 +552,17 @@ public partial class ConversationsWindow : Window
             if (skippedRunning > 0) extras.Add($"⚠ {skippedRunning} 个项目未加入（Codex Desktop 在跑，请关掉再用主界面手动加）");
             var extra = extras.Count > 0 ? "\n\n" + string.Join("\n", extras) : "";
 
+            await Dialogs.WarnIfPartialSyncAsync(this, result);
+
             await Dialogs.InfoAsync(this, "完成",
                 $"已迁移 {result.RolloutFilesSynced} 个对话，数据库 {result.SqliteRowsSynced} 条记录。{extra}\n\n备份：{result.BackupPath}");
             Close();
+        }
+        catch (ProviderNotDefinedException ex)
+        {
+            await Dialogs.ShowProviderNotDefinedAsync(this, ex);
+            FooterHint.Text = "勾选后选择目标渠道，点「迁移选中」";
+            MoveBtn.IsEnabled = true;
         }
         catch (SqliteLockedException ex)
         {
