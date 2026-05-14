@@ -7,7 +7,8 @@ public record RestoreResult(
     int RolloutFilesRestored,
     bool SqliteRestored,
     bool ConfigRestored,
-    string? Error);
+    string? Error,
+    List<FileHolder>? BlockingProcesses = null);
 
 public static class BackupService
 {
@@ -55,13 +56,20 @@ public static class BackupService
         var sourceDir = Path.Combine(codexHome, subDir);
         if (!Directory.Exists(sourceDir)) return;
 
-        foreach (var file in Directory.EnumerateFiles(sourceDir, "*.jsonl", SearchOption.AllDirectories))
+        var files = Directory.EnumerateFiles(sourceDir, "*.jsonl", SearchOption.AllDirectories).ToArray();
+        // 先把目标子目录全部建好，避免并行 CreateDirectory 互相竞争
+        foreach (var file in files)
         {
             var relativePath = Path.GetRelativePath(codexHome, file);
             var destPath = Path.Combine(backupDir, relativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
-            File.Copy(file, destPath);
         }
+        Parallel.ForEach(files, file =>
+        {
+            var relativePath = Path.GetRelativePath(codexHome, file);
+            var destPath = Path.Combine(backupDir, relativePath);
+            File.Copy(file, destPath);
+        });
     }
 
     public static List<string> ListBackups(string codexHome)
@@ -92,35 +100,27 @@ public static class BackupService
                 var walPath = current + "-wal";
                 var shmPath = current + "-shm";
 
-                // 必须先删除 -wal/-shm，否则 SQLite 会把旧 WAL 重放到刚还原的文件上覆盖回去。
-                // 删不掉就 hard fail —— 否则用户以为还原成功，下次 Codex 启动数据立刻被覆盖回旧值。
+                // 必须先处理 -wal/-shm，否则 SQLite 会把旧 WAL 重放到刚还原的文件上覆盖回去。
+                // 三步策略：1) 试 Delete; 2) Delete 失败试 Move 到 .bak; 3) 都不行报告占用进程让用户处理。
                 if (File.Exists(walPath))
                 {
-                    try { File.Delete(walPath); }
-                    catch (Exception ex)
-                    {
-                        return new RestoreResult(false, 0, false, false,
-                            $"无法删除旧的 SQLite WAL 文件 ({walPath}): {ex.Message}\n\n" +
-                            "通常是 Codex 仍在运行或文件被某个进程持有。" +
-                            "请打开任务管理器搜索 Codex / Electron 全部关掉后重试。");
-                    }
+                    var err = TryRemoveLockableFile(walPath, out var blocking);
+                    if (err != null) return new RestoreResult(false, 0, false, false, err, blocking);
                 }
                 if (File.Exists(shmPath))
                 {
-                    try { File.Delete(shmPath); }
-                    catch (Exception ex)
-                    {
-                        return new RestoreResult(false, 0, false, false,
-                            $"无法删除旧的 SQLite SHM 文件 ({shmPath}): {ex.Message}");
-                    }
+                    var err = TryRemoveLockableFile(shmPath, out var blocking);
+                    if (err != null) return new RestoreResult(false, 0, false, false, err, blocking);
                 }
 
                 try { File.Copy(sqliteBackup, current, overwrite: true); }
                 catch (Exception ex)
                 {
+                    var holders = FileLockDiagnostics.GetProcessesLocking(current);
                     return new RestoreResult(false, 0, false, false,
                         $"还原数据库失败: {ex.Message}\n\n" +
-                        "可能是文件被 Codex 占用。请彻底关闭 Codex 后重试。");
+                        $"持有这个文件的进程:\n{FileLockDiagnostics.FormatHolders(holders)}",
+                        holders);
                 }
                 sqliteOk = true;
             }
@@ -143,20 +143,60 @@ public static class BackupService
         }
     }
 
+    /// <summary>
+    /// 删除一个被某进程锁住的文件。
+    /// 1. 先试 Delete；
+    /// 2. 失败则试 Move 到 .bak 文件名（Move 在 Windows 上对共享锁容忍度高些）；
+    /// 3. 都失败：返回包含占用进程列表的错误信息（Windows 用 Restart Manager 检测）。
+    /// 返回 null 表示成功 / 文件已不存在；返回 string 表示失败原因。
+    /// </summary>
+    private static string? TryRemoveLockableFile(string path, out List<FileHolder>? blocking)
+    {
+        blocking = null;
+        if (!File.Exists(path)) return null;
+        try { File.Delete(path); return null; }
+        catch (Exception delEx)
+        {
+            // Fallback 1: 试 Move 到带时间戳的 .bak —— 比 Delete 容忍度高
+            var fallback = path + ".bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
+            try
+            {
+                File.Move(path, fallback);
+                return null;
+            }
+            catch (Exception moveEx)
+            {
+                blocking = FileLockDiagnostics.GetProcessesLocking(path);
+                var processInfo = blocking.Count > 0
+                    ? $"\n\n持有这个文件的进程:\n{FileLockDiagnostics.FormatHolders(blocking)}"
+                    : "";
+                return $"无法删除被锁定的文件:\n  {path}\n\n" +
+                       $"Delete 错误: {delEx.Message}\n" +
+                       $"Move 错误: {moveEx.Message}" + processInfo;
+            }
+        }
+    }
+
     private static int RestoreRolloutFiles(string codexHome, string backupDir, string subDir)
     {
         var backupSubDir = Path.Combine(backupDir, subDir);
         if (!Directory.Exists(backupSubDir)) return 0;
 
-        int count = 0;
-        foreach (var file in Directory.EnumerateFiles(backupSubDir, "*.jsonl", SearchOption.AllDirectories))
+        var files = Directory.EnumerateFiles(backupSubDir, "*.jsonl", SearchOption.AllDirectories).ToArray();
+        foreach (var file in files)
         {
             var relativePath = Path.GetRelativePath(backupDir, file);
             var destPath = Path.Combine(codexHome, relativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
-            File.Copy(file, destPath, overwrite: true);
-            count++;
         }
+        int count = 0;
+        Parallel.ForEach(files, file =>
+        {
+            var relativePath = Path.GetRelativePath(backupDir, file);
+            var destPath = Path.Combine(codexHome, relativePath);
+            File.Copy(file, destPath, overwrite: true);
+            Interlocked.Increment(ref count);
+        });
         return count;
     }
 

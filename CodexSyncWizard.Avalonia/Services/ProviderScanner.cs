@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 
@@ -98,33 +99,33 @@ public static class ProviderScanner
             catch { return false; }
         }
 
-        var sessionsDir = Path.Combine(codexHome, "sessions");
-        if (Directory.Exists(sessionsDir))
+        // 并行扫两个目录的 jsonl 首行 —— IO bound，多线程提速 5-10x
+        var rolloutCounter = new ConcurrentDictionary<string, int>();
+        int totalRolloutAtomic = 0;
+        int totalArchivedAtomic = 0;
+
+        void ScanDir(string dir, bool isArchived)
         {
-            foreach (var file in Directory.EnumerateFiles(sessionsDir, "*.jsonl", SearchOption.AllDirectories))
+            if (!Directory.Exists(dir)) return;
+            var files = Directory.EnumerateFiles(dir, "*.jsonl", SearchOption.AllDirectories).ToArray();
+            Parallel.ForEach(files, file =>
             {
                 if (ShouldCount(file, out var provider))
                 {
-                    totalRollout++;
+                    if (isArchived) Interlocked.Increment(ref totalArchivedAtomic);
+                    else Interlocked.Increment(ref totalRolloutAtomic);
                     if (provider != null)
-                        rolloutProviders[provider] = rolloutProviders.GetValueOrDefault(provider) + 1;
+                        rolloutCounter.AddOrUpdate(provider, 1, (_, v) => v + 1);
                 }
-            }
+            });
         }
 
-        var archivedDir = Path.Combine(codexHome, "archived_sessions");
-        if (Directory.Exists(archivedDir))
-        {
-            foreach (var file in Directory.EnumerateFiles(archivedDir, "*.jsonl", SearchOption.AllDirectories))
-            {
-                if (ShouldCount(file, out var provider))
-                {
-                    totalArchived++;
-                    if (provider != null)
-                        rolloutProviders[provider] = rolloutProviders.GetValueOrDefault(provider) + 1;
-                }
-            }
-        }
+        ScanDir(Path.Combine(codexHome, "sessions"), false);
+        ScanDir(Path.Combine(codexHome, "archived_sessions"), true);
+
+        totalRollout = totalRolloutAtomic;
+        totalArchived = totalArchivedAtomic;
+        foreach (var kv in rolloutCounter) rolloutProviders[kv.Key] = kv.Value;
 
         // 合并：对话里出现过的 provider + config.toml 已定义的 provider
         // （后者即使 0 条也要保留，否则迁完一次 provider 卡片就消失，用户以为没了）

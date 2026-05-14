@@ -218,10 +218,41 @@ public partial class AdvancedWindow : Window
             else
             {
                 var restore = await Task.Run(() => BackupService.RestoreBackup(home, info.Path));
+                while (!restore.Success && restore.BlockingProcesses?.Count > 0)
+                {
+                    Log("还原被进程占用，发现 " + restore.BlockingProcesses.Count + " 个占用进程");
+                    var holderList = string.Join("\n", restore.BlockingProcesses.Select(h => $"  · {h.ProcessName} (PID {h.Pid})"));
+                    var doKill = await Dialogs.ConfirmAsync(this, "文件被进程占用",
+                        $"以下进程持有 Codex 数据文件，导致还原失败:\n\n{holderList}\n\n" +
+                        "强制结束这些进程并重试？(未保存的工作会丢)");
+                    if (!doKill)
+                    {
+                        Log("用户取消强制结束");
+                        await Dialogs.ErrorAsync(this, "还原失败", restore.Error ?? "未知错误",
+                            copyableDetail: $"BlockingProcesses:\n{holderList}\n\n{restore.Error}");
+                        return;
+                    }
+                    Log("正在强制结束占用进程...");
+                    var kill = await Task.Run(() => ProcessKiller.KillAll(restore.BlockingProcesses));
+                    Log($"已结束 {kill.Killed} 个 / 失败 {kill.Failed} 个");
+                    if (kill.Failed > 0)
+                    {
+                        await Dialogs.ErrorAsync(this, "部分进程结束失败",
+                            $"已成功结束 {kill.Killed} 个，但有 {kill.Failed} 个失败:\n" +
+                            string.Join("\n", kill.Errors) +
+                            "\n\n可能是需要管理员权限。请右键以管理员身份运行本程序后重试。");
+                        return;
+                    }
+                    // 让 OS 释放文件句柄
+                    await Task.Delay(500);
+                    Log("重试还原...");
+                    restore = await Task.Run(() => BackupService.RestoreBackup(home, info.Path));
+                }
                 if (!restore.Success)
                 {
                     Log("还原失败: " + restore.Error);
-                    await Dialogs.InfoAsync(this, "还原失败", restore.Error ?? "未知错误");
+                    await Dialogs.ErrorAsync(this, "还原失败", restore.Error ?? "未知错误",
+                        copyableDetail: restore.Error);
                     return;
                 }
                 var parts = new List<string>();
@@ -239,7 +270,7 @@ public partial class AdvancedWindow : Window
         catch (Exception ex)
         {
             Log($"出错：{ex.Message}");
-            await Dialogs.InfoAsync(this, "错误", ex.Message);
+            await Dialogs.ErrorAsync(this, "错误", ex.Message, copyableDetail: ex.ToString());
         }
     }
 }

@@ -36,32 +36,28 @@ public static class SourceCategory
 
 public static class ConversationBrowser
 {
+    /// <summary>
+    /// 列出某 provider 下的所有对话。
+    /// 策略：SQLite 优先 —— 能从 SQLite 拿到的就用，磁盘扫描只对 SQLite 漏掉的"孤儿 jsonl"做兜底。
+    /// 这样 1000 个对话的常见场景从全文扫描（几 GB IO）变成只读 SQLite + 若干个孤儿首行（毫秒级）。
+    /// </summary>
     public static List<ConversationInfo> ListByProvider(string codexHome, string provider)
     {
         var fromSqlite = QuerySqlite(codexHome, provider);
-        var fromJsonl = ScanJsonl(codexHome, provider);
+
+        // 收集 SQLite 里已知的 rollout_path，扫盘时跳过这些
+        var knownPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var c in fromSqlite)
+            if (!string.IsNullOrEmpty(c.FilePath)) knownPaths.Add(c.FilePath);
+
+        // 只扫 SQLite 没覆盖到的 jsonl（孤儿）—— 多线程并行读首行
+        var orphans = ScanJsonlOrphans(codexHome, provider, knownPaths);
 
         var byPath = new Dictionary<string, ConversationInfo>(StringComparer.OrdinalIgnoreCase);
         foreach (var c in fromSqlite)
-        {
             if (!string.IsNullOrEmpty(c.FilePath)) byPath[c.FilePath] = c;
-        }
-        foreach (var c in fromJsonl)
-        {
-            if (string.IsNullOrEmpty(c.FilePath)) continue;
-            if (byPath.TryGetValue(c.FilePath, out var existing))
-            {
-                byPath[c.FilePath] = new ConversationInfo(
-                    c.FilePath, c.Provider, existing.Timestamp ?? c.Timestamp,
-                    existing.Title, existing.FirstUserMessage ?? c.FirstUserMessage,
-                    existing.Cwd ?? c.Cwd, existing.Model, c.Turns, c.FileSize,
-                    existing.Source ?? c.Source);
-            }
-            else
-            {
-                byPath[c.FilePath] = c;
-            }
-        }
+        foreach (var c in orphans)
+            if (!string.IsNullOrEmpty(c.FilePath)) byPath[c.FilePath] = c;
 
         return byPath.Values.OrderByDescending(c => c.Timestamp ?? DateTime.MinValue).ToList();
     }
@@ -112,29 +108,37 @@ public static class ConversationBrowser
         return result;
     }
 
-    private static List<ConversationInfo> ScanJsonl(string codexHome, string provider)
+    private static List<ConversationInfo> ScanJsonlOrphans(string codexHome, string provider, HashSet<string> knownPaths)
     {
-        var result = new List<ConversationInfo>();
+        var orphanFiles = new List<string>();
         foreach (var sub in new[] { "sessions", "archived_sessions" })
         {
             var dir = Path.Combine(codexHome, sub);
             if (!Directory.Exists(dir)) continue;
             foreach (var f in Directory.EnumerateFiles(dir, "*.jsonl", SearchOption.AllDirectories))
             {
-                var info = TryReadFromFile(f);
-                if (info == null || info.Provider != provider) continue;
-                if (!IncludeInternalSources)
-                {
-                    var cat = SourceCategory.Categorize(info.Source);
-                    if (cat == SourceCategory.Exec || cat == SourceCategory.Subagent) continue;
-                }
-                result.Add(info);
+                if (!knownPaths.Contains(f)) orphanFiles.Add(f);
             }
         }
-        return result;
+        if (orphanFiles.Count == 0) return new List<ConversationInfo>();
+
+        // 并行只读首行（headOnly），避免全文扫描
+        var bag = new System.Collections.Concurrent.ConcurrentBag<ConversationInfo>();
+        Parallel.ForEach(orphanFiles, f =>
+        {
+            var info = TryReadFromFile(f, headOnly: true);
+            if (info == null || info.Provider != provider) return;
+            if (!IncludeInternalSources)
+            {
+                var cat = SourceCategory.Categorize(info.Source);
+                if (cat == SourceCategory.Exec || cat == SourceCategory.Subagent) return;
+            }
+            bag.Add(info);
+        });
+        return bag.ToList();
     }
 
-    public static ConversationInfo? TryReadFromFile(string filePath)
+    public static ConversationInfo? TryReadFromFile(string filePath, bool headOnly = false)
     {
         try
         {
@@ -161,46 +165,50 @@ public static class ConversationBrowser
                 if (p.TryGetProperty("source", out var srcEl)) jsonlSource = srcEl.GetString();
             }
 
-            string? line;
-            while ((line = sr.ReadLine()) != null)
+            // headOnly: 只读首行就返回，跳过 turns 统计和 firstMsg 全文搜索（昂贵）
+            if (!headOnly)
             {
-                try
+                string? line;
+                while ((line = sr.ReadLine()) != null)
                 {
-                    using var doc = JsonDocument.Parse(line);
-                    var root = doc.RootElement;
-                    if (!root.TryGetProperty("type", out var t)) continue;
-                    var typeName = t.GetString();
-                    if (typeName == "event_msg")
+                    try
                     {
-                        if (root.TryGetProperty("payload", out var p) &&
-                            p.TryGetProperty("type", out var subType) &&
-                            subType.GetString() == "task_started")
-                            turns++;
-                    }
-                    else if (typeName == "response_item" && firstMsg == null)
-                    {
-                        if (root.TryGetProperty("payload", out var p) &&
-                            p.TryGetProperty("type", out var rt) && rt.GetString() == "message" &&
-                            p.TryGetProperty("role", out var role) && role.GetString() == "user" &&
-                            p.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
+                        using var doc = JsonDocument.Parse(line);
+                        var root = doc.RootElement;
+                        if (!root.TryGetProperty("type", out var t)) continue;
+                        var typeName = t.GetString();
+                        if (typeName == "event_msg")
                         {
-                            foreach (var c in content.EnumerateArray())
+                            if (root.TryGetProperty("payload", out var p) &&
+                                p.TryGetProperty("type", out var subType) &&
+                                subType.GetString() == "task_started")
+                                turns++;
+                        }
+                        else if (typeName == "response_item" && firstMsg == null)
+                        {
+                            if (root.TryGetProperty("payload", out var p) &&
+                                p.TryGetProperty("type", out var rt) && rt.GetString() == "message" &&
+                                p.TryGetProperty("role", out var role) && role.GetString() == "user" &&
+                                p.TryGetProperty("content", out var content) && content.ValueKind == JsonValueKind.Array)
                             {
-                                if (c.TryGetProperty("type", out var ct) && ct.GetString() == "input_text" &&
-                                    c.TryGetProperty("text", out var txt))
+                                foreach (var c in content.EnumerateArray())
                                 {
-                                    var s = txt.GetString();
-                                    if (!string.IsNullOrWhiteSpace(s) && !s.StartsWith("<"))
+                                    if (c.TryGetProperty("type", out var ct) && ct.GetString() == "input_text" &&
+                                        c.TryGetProperty("text", out var txt))
                                     {
-                                        firstMsg = s;
-                                        break;
+                                        var s = txt.GetString();
+                                        if (!string.IsNullOrWhiteSpace(s) && !s.StartsWith("<"))
+                                        {
+                                            firstMsg = s;
+                                            break;
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                    catch { }
                 }
-                catch { }
             }
 
             var fi = new FileInfo(filePath);

@@ -572,7 +572,7 @@ public partial class ConversationsWindow : Window
         }
         catch (Exception ex)
         {
-            await Dialogs.InfoAsync(this, "错误", ex.Message);
+            await Dialogs.ErrorAsync(this, "错误", ex.Message, copyableDetail: ex.ToString());
             FooterHint.Text = "勾选后选择目标渠道，点「迁移选中」";
             MoveBtn.IsEnabled = true;
         }

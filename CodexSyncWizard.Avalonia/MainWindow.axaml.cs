@@ -316,7 +316,7 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            await Dialogs.InfoAsync(this, "错误", ex.Message);
+            await Dialogs.ErrorAsync(this, "错误", ex.Message, copyableDetail: ex.ToString());
         }
         finally
         {

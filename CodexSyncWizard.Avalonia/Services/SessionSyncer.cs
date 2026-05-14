@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Data.Sqlite;
@@ -145,28 +146,28 @@ public static class SessionSyncer
     private static int DeleteOtherProviderRollouts(string dir, string targetProvider, CancellationToken ct)
     {
         if (!Directory.Exists(dir)) return 0;
+        var files = Directory.EnumerateFiles(dir, "*.jsonl", SearchOption.AllDirectories).ToArray();
         int count = 0;
-        foreach (var file in Directory.EnumerateFiles(dir, "*.jsonl", SearchOption.AllDirectories))
+        Parallel.ForEach(files, new ParallelOptions { CancellationToken = ct }, file =>
         {
-            ct.ThrowIfCancellationRequested();
             try
             {
                 using (var sr = new StreamReader(file))
                 {
                     var first = sr.ReadLine();
-                    if (string.IsNullOrEmpty(first)) continue;
+                    if (string.IsNullOrEmpty(first)) return;
                     using var doc = JsonDocument.Parse(first);
-                    if (!doc.RootElement.TryGetProperty("type", out var t)) continue;
-                    if (t.GetString() != "session_meta") continue;
-                    if (!doc.RootElement.TryGetProperty("payload", out var p)) continue;
-                    if (!p.TryGetProperty("model_provider", out var mp)) continue;
-                    if (mp.GetString() == targetProvider) continue;
+                    if (!doc.RootElement.TryGetProperty("type", out var t)) return;
+                    if (t.GetString() != "session_meta") return;
+                    if (!doc.RootElement.TryGetProperty("payload", out var p)) return;
+                    if (!p.TryGetProperty("model_provider", out var mp)) return;
+                    if (mp.GetString() == targetProvider) return;
                 }
                 File.Delete(file);
-                count++;
+                Interlocked.Increment(ref count);
             }
             catch { }
-        }
+        });
         return count;
     }
 
@@ -209,14 +210,13 @@ public static class SessionSyncer
     private static int SyncRolloutDir(string dir, string targetProvider, CancellationToken ct)
     {
         if (!Directory.Exists(dir)) return 0;
-
+        var files = Directory.EnumerateFiles(dir, "*.jsonl", SearchOption.AllDirectories).ToArray();
         int count = 0;
-        foreach (var file in Directory.EnumerateFiles(dir, "*.jsonl", SearchOption.AllDirectories))
+        Parallel.ForEach(files, new ParallelOptions { CancellationToken = ct }, file =>
         {
-            ct.ThrowIfCancellationRequested();
             if (SyncRolloutFile(file, targetProvider))
-                count++;
-        }
+                Interlocked.Increment(ref count);
+        });
         return count;
     }
 
@@ -306,11 +306,10 @@ public static class SessionSyncer
 
         progress?.Report($"正在删除 {filePaths.Count} 个对话...");
         int deleted = 0;
-        var threadIds = new List<string>();
+        var threadIds = new ConcurrentBag<string>();
 
-        foreach (var fp in filePaths)
+        Parallel.ForEach(filePaths, new ParallelOptions { CancellationToken = ct }, fp =>
         {
-            ct.ThrowIfCancellationRequested();
             var id = ReadThreadId(fp);
             if (!string.IsNullOrEmpty(id)) threadIds.Add(id);
             try
@@ -318,14 +317,14 @@ public static class SessionSyncer
                 if (File.Exists(fp))
                 {
                     File.Delete(fp);
-                    deleted++;
+                    Interlocked.Increment(ref deleted);
                 }
             }
             catch { }
-        }
+        });
 
         progress?.Report("正在删除数据库记录...");
-        int sqliteCount = DeleteSqliteByIds(codexHome, threadIds, out var sqliteError);
+        int sqliteCount = DeleteSqliteByIds(codexHome, threadIds.ToList(), out var sqliteError);
 
         BackupService.PruneBackups(codexHome);
         progress?.Report("删除完成!");
@@ -391,21 +390,20 @@ public static class SessionSyncer
 
         progress?.Report($"正在迁移 {filePaths.Count} 个对话到「{targetProvider}」...");
         int rolloutCount = 0;
-        var threadIds = new List<string>();
+        var threadIds = new ConcurrentBag<string>();
 
-        foreach (var fp in filePaths)
+        Parallel.ForEach(filePaths, new ParallelOptions { CancellationToken = ct }, fp =>
         {
-            ct.ThrowIfCancellationRequested();
             var id = SyncSingleFile(fp, targetProvider);
             if (!string.IsNullOrEmpty(id))
             {
-                rolloutCount++;
+                Interlocked.Increment(ref rolloutCount);
                 threadIds.Add(id);
             }
-        }
+        });
 
         progress?.Report("正在更新数据库...");
-        int sqliteCount = UpdateSqliteByIds(codexHome, threadIds, targetProvider, out var sqliteError);
+        int sqliteCount = UpdateSqliteByIds(codexHome, threadIds.ToList(), targetProvider, out var sqliteError);
 
         BackupService.PruneBackups(codexHome);
 
