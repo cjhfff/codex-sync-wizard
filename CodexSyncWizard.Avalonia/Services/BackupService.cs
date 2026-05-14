@@ -1,3 +1,5 @@
+using Microsoft.Data.Sqlite;
+
 namespace CodexSyncWizard.Services;
 
 public static class BackupService
@@ -12,7 +14,11 @@ public static class BackupService
 
         var sqlitePath = Path.Combine(codexHome, "state_5.sqlite");
         if (File.Exists(sqlitePath))
+        {
+            // 先把 WAL 合并到主文件（不然 -wal 里的新事务备份不到）
+            CheckpointSqlite(sqlitePath);
             File.Copy(sqlitePath, Path.Combine(backupDir, "state_5.sqlite"));
+        }
 
         var configPath = Path.Combine(codexHome, "config.toml");
         if (File.Exists(configPath))
@@ -22,6 +28,19 @@ public static class BackupService
         BackupRolloutFiles(codexHome, "archived_sessions", backupDir);
 
         return backupDir;
+    }
+
+    private static void CheckpointSqlite(string sqlitePath)
+    {
+        try
+        {
+            using var conn = new SqliteConnection($"Data Source={sqlitePath};Mode=ReadWrite");
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
+            cmd.ExecuteNonQuery();
+        }
+        catch { /* Codex 锁着也无所谓，最坏漏几条 WAL，仍可还原大部分 */ }
     }
 
     private static void BackupRolloutFiles(string codexHome, string subDir, string backupDir)
@@ -49,9 +68,18 @@ public static class BackupService
 
     public static void RestoreBackup(string codexHome, string backupDir)
     {
+        if (SessionSyncer.IsCodexLikelyRunning(codexHome))
+            throw new SqliteLockedException();
+
         var sqliteBackup = Path.Combine(backupDir, "state_5.sqlite");
         if (File.Exists(sqliteBackup))
-            File.Copy(sqliteBackup, Path.Combine(codexHome, "state_5.sqlite"), overwrite: true);
+        {
+            var current = Path.Combine(codexHome, "state_5.sqlite");
+            // 必须先删除 -wal/-shm，否则 SQLite 会把旧 WAL 重放到刚还原的文件上覆盖回去
+            try { File.Delete(current + "-wal"); } catch { }
+            try { File.Delete(current + "-shm"); } catch { }
+            File.Copy(sqliteBackup, current, overwrite: true);
+        }
 
         var configBackup = Path.Combine(backupDir, "config.toml");
         if (File.Exists(configBackup))
@@ -75,7 +103,7 @@ public static class BackupService
         }
     }
 
-    public static void PruneBackups(string codexHome, int keepCount = 5)
+    public static void PruneBackups(string codexHome, int keepCount = 2)
     {
         var backups = ListBackups(codexHome);
         foreach (var old in backups.Skip(keepCount))

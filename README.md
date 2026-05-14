@@ -23,16 +23,15 @@ Codex（CLI 或 Desktop）每次切换登录方式（OAuth ↔ 中转 ↔ 别的
 
 ## 主要功能
 
-- **一键归并** — 主窗口顶部按钮，把所有 provider 的对话全合并到选定的目标
-- **细粒度迁移** — 按对话 / 按项目 / 按 source（CLI / Desktop / exec）勾选迁移
-- **provider 仪表板** — 卡片视图，每渠道对话数 + 在用标记，hover 浮出「设为默认」
+- **一键归并** — 主窗口顶部按钮，把所有 provider 的对话全合并到选定的目标（含 exec / 子 agent 内部对话）
+- **细粒度迁移** — 按对话 / 按项目 / 按 source（CLI / 桌面/编辑器）勾选迁移
+- **provider 仪表板** — 卡片视图，每渠道对话数 + 在用标记；config.toml 已定义但 0 条对话的 provider 也显示「空」卡片，可作迁入目标
+- **默认过滤内部对话** — 不展示 `codex exec` 一次性请求和子 agent 派生 thread，UI 干净，归并时仍会一并处理
 - **CLI 模式** — 同一个 exe 也是命令行工具，无参数 GUI、有参数 CLI（见下）
-- **嵌入命令面板** — GUI 里直接调用 CLI 子命令，输入框 + 历史 + 输出区
-- **批量操作窗口** — 图形化按 provider 批量迁移 / 删除
-- **工作区管理** — 把对话所属的项目一键加入 Codex Desktop 左侧栏（避免对话「藏起来」）
+- **工作区管理** — 顶部橙色 banner 一键把所有未登记的项目加入 Codex Desktop 左侧栏（批量原子写入，毫秒级备份避免冲突）
 - **后台监听** — 托盘模式监听 cc-switch / config.toml 切换，自动归并
 - **智能还原** — 兼容 Dailin521/codex-provider-sync 的紧凑备份格式
-- **每次操作前自动备份** — 「高级」里可一键还原
+- **每次操作前自动备份** — SQLite 备份前 WAL checkpoint，还原前清 -wal/-shm，避免被旧 WAL 覆盖回去；「高级」里可一键还原
 
 ## 下载
 
@@ -89,12 +88,14 @@ codex-sync smart-restore                       # 还原 Dailin521 紧凑备份
 codex-sync help                                # 完整命令清单
 ```
 
-GUI 内也能跑 — 主窗口底部「命令」按钮打开命令面板。
+GUI 内也能跑 — 主窗口底部「高级 → 命令」打开命令面板。
 
 ## 数据安全
 
 - 每次操作前自动备份到 `~/.codex/backups_state/provider-sync/`
-- 默认保留最近 5 份
+- 备份 SQLite 前先 `wal_checkpoint(TRUNCATE)`，把 -wal 里未落盘事务一起备进去
+- 还原时自动清 -wal/-shm，避免旧 WAL 重放覆盖刚还原的数据
+- 默认保留最近 2 份
 - 「高级 → 备份列表」一键还原
 - 智能还原能叠加 Dailin521 旧工具留下的紧凑备份
 

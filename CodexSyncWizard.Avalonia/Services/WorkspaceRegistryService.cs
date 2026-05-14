@@ -80,6 +80,66 @@ public static class WorkspaceRegistryService
         Error
     }
 
+    public record BatchAddResult(int Added, int AlreadyExists, int Failed, string? ErrorMsg);
+
+    public static BatchAddResult AddWorkspaces(string codexHome, IList<string> cwds)
+    {
+        var path = GetStatePath(codexHome);
+        if (!File.Exists(path))
+            return new BatchAddResult(0, 0, cwds.Count, "未找到 .codex-global-state.json");
+
+        if (IsCodexDesktopRunning())
+            return new BatchAddResult(0, 0, cwds.Count, "Codex Desktop 正在运行，请先彻底退出");
+
+        try
+        {
+            var bak = path + ".bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
+            File.Copy(path, bak, overwrite: true);
+
+            var content = File.ReadAllText(path);
+            var node = JsonNode.Parse(content)!;
+            var roots = node["electron-saved-workspace-roots"] as JsonArray ?? new JsonArray();
+            var ordered = node["project-order"] as JsonArray ?? new JsonArray();
+
+            var existingKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in roots)
+            {
+                var s = Normalize(item?.GetValue<string>() ?? "");
+                if (!string.IsNullOrEmpty(s)) existingKeys.Add(s);
+            }
+
+            var newRoots = new JsonArray();
+            var newOrdered = new JsonArray();
+            foreach (var r in roots) newRoots.Add(r?.DeepClone());
+            foreach (var r in ordered) newOrdered.Add(r?.DeepClone());
+
+            int added = 0, exists = 0, failed = 0;
+            foreach (var raw in cwds)
+            {
+                var clean = Normalize(raw);
+                if (string.IsNullOrEmpty(clean)) { failed++; continue; }
+                if (!existingKeys.Add(clean)) { exists++; continue; }
+                newRoots.Add(clean);
+                newOrdered.Add(clean);
+                added++;
+            }
+
+            node["electron-saved-workspace-roots"] = newRoots;
+            node["project-order"] = newOrdered;
+
+            var newJson = node.ToJsonString();
+            File.WriteAllText(path, newJson);
+            var sibling = path + ".bak";
+            if (File.Exists(sibling)) File.WriteAllText(sibling, newJson);
+
+            return new BatchAddResult(added, exists, failed, null);
+        }
+        catch (Exception ex)
+        {
+            return new BatchAddResult(0, 0, cwds.Count, ex.Message);
+        }
+    }
+
     public static AddResult AddWorkspace(string codexHome, string cwd, out string? errorMsg)
     {
         errorMsg = null;
@@ -121,8 +181,9 @@ public static class WorkspaceRegistryService
             }
             if (exists) return AddResult.AlreadyExists;
 
-            var bak = path + ".bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss");
-            File.Copy(path, bak);
+            // 用毫秒精度避免批量调用时同秒覆盖；overwrite=true 兜底
+            var bak = path + ".bak-" + DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
+            File.Copy(path, bak, overwrite: true);
 
             var newRoots = new JsonArray();
             foreach (var r in roots) newRoots.Add(r?.DeepClone());

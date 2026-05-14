@@ -223,10 +223,18 @@ public partial class MainWindow : Window
         var target = ConsolidateTarget.SelectedItem as string;
         if (string.IsNullOrEmpty(target) || _scan == null) return;
 
+        // 归并是数据层操作，必须扫全部（含 subagent / exec），不能被视图 filter 漏掉
+        var origInclude = ConversationBrowser.IncludeInternalSources;
+        ConversationBrowser.IncludeInternalSources = true;
+        ScanResult fullScan;
+        try { fullScan = ProviderScanner.Scan(_codexHome, includeInternalSources: true); }
+        finally { /* 不在这先复位，下面收集对话还要用 */ }
+
         var paths = new List<string>();
         var unregistered = new List<string>();
         var seenCwd = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var p in _scan.Providers.Values)
+        int internalCount = 0;
+        foreach (var p in fullScan.Providers.Values)
         {
             if (p.Name == target) continue;
             var convs = ConversationBrowser.ListByProvider(_codexHome, p.Name);
@@ -234,6 +242,8 @@ public partial class MainWindow : Window
             {
                 if (string.IsNullOrEmpty(c.FilePath)) continue;
                 paths.Add(c.FilePath);
+                var cat = SourceCategory.Categorize(c.Source);
+                if (cat == SourceCategory.Subagent || cat == SourceCategory.Exec) internalCount++;
                 if (!string.IsNullOrEmpty(c.Cwd))
                 {
                     var key = WorkspaceRegistryService.Normalize(c.Cwd).ToLowerInvariant();
@@ -242,9 +252,27 @@ public partial class MainWindow : Window
                 }
             }
         }
+        ConversationBrowser.IncludeInternalSources = origInclude;
         if (paths.Count == 0) return;
 
-        var msg = $"把所有非「{target}」的 {paths.Count} 个对话合并到「{target}」？\n会先自动备份。";
+        var providerSummary = string.Join(", ",
+            fullScan.Providers.Values
+                .Where(p => p.Name != target && p.TotalCount > 0)
+                .OrderByDescending(p => p.TotalCount)
+                .Select(p => $"{p.Name}({p.TotalCount})"));
+
+        var msg =
+            $"把这 {paths.Count} 个对话归到「{target}」名下？\n" +
+            $"涉及来源: {providerSummary}\n";
+        if (internalCount > 0)
+            msg += $"（含 {internalCount} 个子 agent / exec 内部对话，平时视图里隐藏的也会一并迁移）\n";
+        msg +=
+            "\n做了什么:\n" +
+            "  · 仅修改对话首行的 model_provider 字段\n" +
+            "  · 数据库 threads.model_provider 同步更新\n" +
+            "  · 对话内容（消息、上下文、文件）一字不动\n" +
+            "  · 老 provider 名字下不再有这些对话（被改名了，不是删除）\n" +
+            "  · 操作前自动备份，「高级 → 备份列表」可一键还原";
         if (unregistered.Count > 0)
             msg += $"\n\n顺便会把 {unregistered.Count} 个未登记的项目加入 Codex 工作区列表。";
         var ok = await Dialogs.ConfirmAsync(this, "确认归并", msg);
@@ -257,20 +285,20 @@ public partial class MainWindow : Window
             var t = target;
             var result = await Task.Run(() => SessionSyncer.SyncSpecificFiles(home, paths, t));
 
-            int wsAdded = 0, wsBlocked = 0;
             foreach (var cwd in unregistered)
             {
                 var clean = WorkspaceRegistryService.Normalize(cwd);
                 if (!Directory.Exists(clean))
                     try { Directory.CreateDirectory(clean); } catch { }
-                var r = WorkspaceRegistryService.AddWorkspace(home, cwd, out _);
-                if (r == WorkspaceRegistryService.AddResult.Added) wsAdded++;
-                else if (r == WorkspaceRegistryService.AddResult.CodexRunning) wsBlocked++;
             }
+            var batch = unregistered.Count > 0
+                ? await Task.Run(() => WorkspaceRegistryService.AddWorkspaces(home, unregistered))
+                : new WorkspaceRegistryService.BatchAddResult(0, 0, 0, null);
 
             var extras = new List<string> { $"改 {result.RolloutFilesSynced} 个对话 / {result.SqliteRowsSynced} 条数据库" };
-            if (wsAdded > 0) extras.Add($"加入 {wsAdded} 个项目到工作区");
-            if (wsBlocked > 0) extras.Add($"⚠ {wsBlocked} 个项目未加入（Codex Desktop 在跑）");
+            if (batch.Added > 0) extras.Add($"加入 {batch.Added} 个项目到工作区");
+            if (batch.AlreadyExists > 0) extras.Add($"{batch.AlreadyExists} 个项目已存在，跳过");
+            if (batch.Failed > 0) extras.Add($"⚠ {batch.Failed} 个项目未加入（{batch.ErrorMsg}）");
 
             await Dialogs.InfoAsync(this, "完成",
                 "全部归并完成！\n\n" + string.Join("\n", extras) + "\n\n备份：" + result.BackupPath);
@@ -351,12 +379,13 @@ public partial class MainWindow : Window
         Grid.SetColumn(nameStack, 0);
         header.Children.Add(nameStack);
 
+        var isEmpty = info.TotalCount == 0;
         var countLabel = new TextBlock
         {
-            Text = info.TotalCount.ToString(),
-            FontSize = 22,
+            Text = isEmpty ? "空" : info.TotalCount.ToString(),
+            FontSize = isEmpty ? 12 : 22,
             FontWeight = FontWeight.Bold,
-            Foreground = accent,
+            Foreground = isEmpty ? muted : accent,
             VerticalAlignment = VerticalAlignment.Center
         };
         Grid.SetColumn(countLabel, 1);
@@ -367,7 +396,9 @@ public partial class MainWindow : Window
 
         var subtitle = new TextBlock
         {
-            Text = $"对话 {info.RolloutCount}  ·  数据库 {info.SqliteCount}",
+            Text = isEmpty
+                ? "config.toml 已定义，可作为迁入目标"
+                : $"对话 {info.RolloutCount}  ·  数据库 {info.SqliteCount}",
             Classes = { "muted" },
             FontSize = 11,
             Margin = new Thickness(0, 4, 0, 0)
@@ -381,7 +412,7 @@ public partial class MainWindow : Window
 
         var openHint = new TextBlock
         {
-            Text = "查看 / 迁移 ›",
+            Text = isEmpty ? "（无对话可看）" : "查看 / 迁移 ›",
             FontSize = 11,
             Foreground = muted,
             VerticalAlignment = VerticalAlignment.Center

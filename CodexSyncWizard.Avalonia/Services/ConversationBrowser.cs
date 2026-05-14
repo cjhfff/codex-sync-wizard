@@ -17,7 +17,7 @@ public record ConversationInfo(
 
 public static class SourceCategory
 {
-    public const string Desktop = "Desktop";
+    public const string Desktop = "桌面/编辑器";
     public const string Cli = "CLI";
     public const string Exec = "exec";
     public const string Subagent = "子 agent";
@@ -66,6 +66,8 @@ public static class ConversationBrowser
         return byPath.Values.OrderByDescending(c => c.Timestamp ?? DateTime.MinValue).ToList();
     }
 
+    public static bool IncludeInternalSources = false;
+
     private static List<ConversationInfo> QuerySqlite(string codexHome, string provider)
     {
         var result = new List<ConversationInfo>();
@@ -77,11 +79,16 @@ public static class ConversationBrowser
             using var conn = new SqliteConnection($"Data Source={sqlitePath};Mode=ReadOnly");
             conn.Open();
             using var cmd = conn.CreateCommand();
-            cmd.CommandText = @"
-SELECT rollout_path, title, first_user_message, cwd, model, created_at_ms, source
-FROM threads
-WHERE model_provider = @p
-ORDER BY created_at_ms DESC";
+            if (IncludeInternalSources)
+                cmd.CommandText = @"SELECT rollout_path, title, first_user_message, cwd, model, created_at_ms, source
+                                    FROM threads WHERE model_provider = @p
+                                    ORDER BY created_at_ms DESC";
+            else
+                cmd.CommandText = @"SELECT rollout_path, title, first_user_message, cwd, model, created_at_ms, source
+                                    FROM threads
+                                    WHERE model_provider = @p
+                                      AND (source IS NULL OR (source != 'exec' AND source NOT LIKE '%subagent%'))
+                                    ORDER BY created_at_ms DESC";
             cmd.Parameters.AddWithValue("@p", provider);
             using var r = cmd.ExecuteReader();
             while (r.Read())
@@ -115,7 +122,13 @@ ORDER BY created_at_ms DESC";
             foreach (var f in Directory.EnumerateFiles(dir, "*.jsonl", SearchOption.AllDirectories))
             {
                 var info = TryReadFromFile(f);
-                if (info != null && info.Provider == provider) result.Add(info);
+                if (info == null || info.Provider != provider) continue;
+                if (!IncludeInternalSources)
+                {
+                    var cat = SourceCategory.Categorize(info.Source);
+                    if (cat == SourceCategory.Exec || cat == SourceCategory.Subagent) continue;
+                }
+                result.Add(info);
             }
         }
         return result;
@@ -133,6 +146,7 @@ ORDER BY created_at_ms DESC";
             DateTime? ts = null;
             string? cwd = null;
             string? firstMsg = null;
+            string? jsonlSource = null;
             int turns = 0;
 
             using (var doc = JsonDocument.Parse(first))
@@ -144,6 +158,7 @@ ORDER BY created_at_ms DESC";
                 if (p.TryGetProperty("model_provider", out var mp)) provider = mp.GetString() ?? "";
                 if (p.TryGetProperty("timestamp", out var tsEl) && DateTime.TryParse(tsEl.GetString(), out var parsed)) ts = parsed;
                 if (p.TryGetProperty("cwd", out var cwdEl)) cwd = cwdEl.GetString();
+                if (p.TryGetProperty("source", out var srcEl)) jsonlSource = srcEl.GetString();
             }
 
             string? line;
@@ -189,7 +204,7 @@ ORDER BY created_at_ms DESC";
             }
 
             var fi = new FileInfo(filePath);
-            return new ConversationInfo(filePath, provider, ts, null, firstMsg, cwd, null, turns, fi.Length);
+            return new ConversationInfo(filePath, provider, ts, null, firstMsg, cwd, null, turns, fi.Length, jsonlSource);
         }
         catch
         {

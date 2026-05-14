@@ -17,7 +17,11 @@ public record ScanResult(
 
 public static class ProviderScanner
 {
-    public static ScanResult Scan(string codexHome)
+    /// <summary>
+    /// 默认 false：只统计用户能直接看到的对话（CLI + Desktop），
+    /// 不算 codex exec "..." 一次性请求 和 子 agent 自动派生的 thread。
+    /// </summary>
+    public static ScanResult Scan(string codexHome, bool includeInternalSources = false)
     {
         var rolloutProviders = new Dictionary<string, int>();
         var sqliteProviders = new Dictionary<string, int>();
@@ -26,30 +30,8 @@ public static class ProviderScanner
         int totalArchived = 0;
         int totalSqliteThreads = 0;
 
-        var sessionsDir = Path.Combine(codexHome, "sessions");
-        if (Directory.Exists(sessionsDir))
-        {
-            foreach (var file in Directory.EnumerateFiles(sessionsDir, "*.jsonl", SearchOption.AllDirectories))
-            {
-                totalRollout++;
-                var provider = ReadProviderFromRollout(file);
-                if (provider != null)
-                    rolloutProviders[provider] = rolloutProviders.GetValueOrDefault(provider) + 1;
-            }
-        }
-
-        var archivedDir = Path.Combine(codexHome, "archived_sessions");
-        if (Directory.Exists(archivedDir))
-        {
-            foreach (var file in Directory.EnumerateFiles(archivedDir, "*.jsonl", SearchOption.AllDirectories))
-            {
-                totalArchived++;
-                var provider = ReadProviderFromRollout(file);
-                if (provider != null)
-                    rolloutProviders[provider] = rolloutProviders.GetValueOrDefault(provider) + 1;
-            }
-        }
-
+        // 1. 拿 SQLite 中各 thread.id → source 的映射，用来判断每个 jsonl 是不是要算
+        var sourceById = new Dictionary<string, string>();
         var sqlitePath = Path.Combine(codexHome, "state_5.sqlite");
         if (File.Exists(sqlitePath))
         {
@@ -57,8 +39,19 @@ public static class ProviderScanner
             {
                 using var conn = new SqliteConnection($"Data Source={sqlitePath};Mode=ReadOnly");
                 conn.Open();
+                using var cmdMap = conn.CreateCommand();
+                cmdMap.CommandText = "SELECT id, source FROM threads";
+                using (var rr = cmdMap.ExecuteReader())
+                    while (rr.Read())
+                        sourceById[rr.GetString(0)] = rr.IsDBNull(1) ? "" : rr.GetString(1);
+
                 using var cmd = conn.CreateCommand();
-                cmd.CommandText = "SELECT model_provider, COUNT(*) FROM threads GROUP BY model_provider";
+                if (includeInternalSources)
+                    cmd.CommandText = "SELECT model_provider, COUNT(*) FROM threads GROUP BY model_provider";
+                else
+                    cmd.CommandText = @"SELECT model_provider, COUNT(*) FROM threads
+                                        WHERE source IS NULL OR (source != 'exec' AND source NOT LIKE '%subagent%')
+                                        GROUP BY model_provider";
                 using var reader = cmd.ExecuteReader();
                 while (reader.Read())
                 {
@@ -78,7 +71,70 @@ public static class ProviderScanner
             warnings.Add("未找到 state_5.sqlite");
         }
 
-        var allProviderNames = rolloutProviders.Keys.Union(sqliteProviders.Keys).Distinct().ToList();
+        bool ShouldCount(string filePath, out string? provider)
+        {
+            provider = null;
+            try
+            {
+                using var sr = new StreamReader(filePath);
+                var first = sr.ReadLine();
+                if (string.IsNullOrEmpty(first)) return false;
+                using var doc = JsonDocument.Parse(first);
+                var root = doc.RootElement;
+                if (!root.TryGetProperty("type", out var t) || t.GetString() != "session_meta") return false;
+                if (!root.TryGetProperty("payload", out var payload)) return false;
+                if (payload.TryGetProperty("model_provider", out var mp))
+                    provider = mp.GetString();
+                if (!includeInternalSources)
+                {
+                    string? id = payload.TryGetProperty("id", out var idEl) ? idEl.GetString() : null;
+                    if (id != null && sourceById.TryGetValue(id, out var src))
+                    {
+                        if (src == "exec" || src.Contains("subagent")) return false;
+                    }
+                }
+                return provider != null;
+            }
+            catch { return false; }
+        }
+
+        var sessionsDir = Path.Combine(codexHome, "sessions");
+        if (Directory.Exists(sessionsDir))
+        {
+            foreach (var file in Directory.EnumerateFiles(sessionsDir, "*.jsonl", SearchOption.AllDirectories))
+            {
+                if (ShouldCount(file, out var provider))
+                {
+                    totalRollout++;
+                    if (provider != null)
+                        rolloutProviders[provider] = rolloutProviders.GetValueOrDefault(provider) + 1;
+                }
+            }
+        }
+
+        var archivedDir = Path.Combine(codexHome, "archived_sessions");
+        if (Directory.Exists(archivedDir))
+        {
+            foreach (var file in Directory.EnumerateFiles(archivedDir, "*.jsonl", SearchOption.AllDirectories))
+            {
+                if (ShouldCount(file, out var provider))
+                {
+                    totalArchived++;
+                    if (provider != null)
+                        rolloutProviders[provider] = rolloutProviders.GetValueOrDefault(provider) + 1;
+                }
+            }
+        }
+
+        // 合并：对话里出现过的 provider + config.toml 已定义的 provider
+        // （后者即使 0 条也要保留，否则迁完一次 provider 卡片就消失，用户以为没了）
+        var definedProviders = ConfigService.ListDefinedProviders(codexHome);
+        var allProviderNames = rolloutProviders.Keys
+            .Union(sqliteProviders.Keys)
+            .Union(definedProviders)
+            .Distinct()
+            .ToList();
+
         var providers = new Dictionary<string, ProviderInfo>();
         foreach (var name in allProviderNames)
         {
@@ -89,28 +145,5 @@ public static class ProviderScanner
         }
 
         return new ScanResult(providers, totalRollout, totalArchived, totalSqliteThreads, warnings);
-    }
-
-    private static string? ReadProviderFromRollout(string filePath)
-    {
-        try
-        {
-            using var reader = new StreamReader(filePath);
-            var firstLine = reader.ReadLine();
-            if (string.IsNullOrEmpty(firstLine)) return null;
-
-            using var doc = JsonDocument.Parse(firstLine);
-            var root = doc.RootElement;
-            if (root.TryGetProperty("type", out var typeEl) && typeEl.GetString() == "session_meta")
-            {
-                if (root.TryGetProperty("payload", out var payload) &&
-                    payload.TryGetProperty("model_provider", out var mp))
-                {
-                    return mp.GetString();
-                }
-            }
-        }
-        catch { }
-        return null;
     }
 }

@@ -11,6 +11,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -34,13 +35,25 @@
 
         <Border Grid.Row="1" Height="1" Background="{StaticResource BorderBrush2}" Margin="0,12,0,0"/>
 
-        <ScrollViewer Grid.Row="2" Margin="0,12,0,0">
+        <Border Grid.Row="2" x:Name="UnregisteredBanner" Background="#FFF7E6" BorderBrush="#FFD591" BorderThickness="1" CornerRadius="6" Padding="14,10" Margin="0,12,0,0" IsVisible="False">
+            <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                <TextBlock Grid.Column="0" Text="⚠" FontSize="16" Foreground="#FA8C16" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                    <TextBlock x:Name="BannerTitle" FontSize="13" FontWeight="Bold" Foreground="#874D00"/>
+                    <TextBlock x:Name="BannerSub" FontSize="11" Foreground="#A86F00"/>
+                </StackPanel>
+                <Button Grid.Column="2" x:Name="BannerAddAllBtn" Content="一键加入" Classes="primary" MinWidth="90" Margin="0,0,8,0" Click="OnAddAllUnregistered"/>
+                <Button Grid.Column="3" Content="✕" MinWidth="32" Click="OnDismissBanner" Background="Transparent" BorderBrush="Transparent"/>
+            </Grid>
+        </Border>
+
+        <ScrollViewer Grid.Row="3" Margin="0,12,0,0">
             <StackPanel x:Name="ListPanel" Spacing="4"/>
         </ScrollViewer>
 
-        <Border Grid.Row="3" Height="1" Background="{StaticResource BorderBrush2}" Margin="0,12,0,0"/>
+        <Border Grid.Row="4" Height="1" Background="{StaticResource BorderBrush2}" Margin="0,12,0,0"/>
 
-        <Grid Grid.Row="4" Margin="0,12,0,0">
+        <Grid Grid.Row="5" Margin="0,12,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>

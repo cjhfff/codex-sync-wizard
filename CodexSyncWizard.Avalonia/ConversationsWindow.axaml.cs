@@ -26,6 +26,7 @@ public partial class ConversationsWindow : Window
     public ConversationsWindow() { InitializeComponent(); }
 
     private string _sourceFilter = "全部";
+    private bool _bannerDismissed;
 
     public ConversationsWindow(string codexHome, string provider, IEnumerable<string> allProviders) : this()
     {
@@ -34,7 +35,7 @@ public partial class ConversationsWindow : Window
 
         TargetCombo.ItemsSource = allProviders.Where(p => p != provider).ToList();
 
-        SourceFilter.ItemsSource = new[] { "全部", SourceCategory.Desktop, SourceCategory.Cli, SourceCategory.Exec, SourceCategory.Subagent, SourceCategory.Unknown };
+        SourceFilter.ItemsSource = new[] { "全部", SourceCategory.Desktop, SourceCategory.Cli, SourceCategory.Unknown };
         SourceFilter.SelectionChanged += (_, _) =>
         {
             _sourceFilter = (SourceFilter.SelectedItem as string) ?? "全部";
@@ -128,6 +129,81 @@ public partial class ConversationsWindow : Window
         }
 
         UpdateSelectionLabel();
+        UpdateBanner();
+    }
+
+    private void UpdateBanner()
+    {
+        if (_bannerDismissed) { UnregisteredBanner.IsVisible = false; return; }
+
+        var unregistered = CollectAllUnregistered();
+        if (unregistered.Count == 0)
+        {
+            UnregisteredBanner.IsVisible = false;
+            return;
+        }
+        BannerTitle.Text = $"⚠ 发现 {unregistered.Count} 个项目未在 Codex 工作区里";
+        BannerSub.Text = $"不加入的话，Codex Desktop 左侧栏看不到这些项目下的对话。一键加入即可一并解决。";
+        UnregisteredBanner.IsVisible = true;
+    }
+
+    private List<string> CollectAllUnregistered()
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var result = new List<string>();
+        foreach (var c in _all)
+        {
+            if (string.IsNullOrEmpty(c.Cwd)) continue;
+            var key = WorkspaceRegistryService.Normalize(c.Cwd).ToLowerInvariant();
+            if (!seen.Add(key)) continue;
+            if (WorkspaceRegistryService.IsRegistered(_codexHome, c.Cwd)) continue;
+            result.Add(c.Cwd!);
+        }
+        return result;
+    }
+
+    private async void OnAddAllUnregistered(object? sender, RoutedEventArgs e)
+    {
+        var list = CollectAllUnregistered();
+        if (list.Count == 0) return;
+
+        if (WorkspaceRegistryService.IsCodexDesktopRunning())
+        {
+            await Dialogs.InfoAsync(this, "Codex Desktop 在运行",
+                "请先彻底退出 Codex Desktop（任务栏右下角图标也右键退出）再加入。否则 Desktop 退出时会覆盖。");
+            return;
+        }
+
+        var ok = await Dialogs.ConfirmAsync(this, "确认",
+            $"把这 {list.Count} 个项目一次性加入 Codex 工作区列表？\n\n" +
+            string.Join("\n", list.Take(8).Select(p => "  · " + ShortProjectName(p))) +
+            (list.Count > 8 ? $"\n  · ...还有 {list.Count - 8} 个" : ""));
+        if (!ok) return;
+
+        BannerAddAllBtn.IsEnabled = false;
+        // 路径不存在的先建占位目录，否则 Codex 打不开
+        foreach (var cwd in list)
+        {
+            var clean = WorkspaceRegistryService.Normalize(cwd);
+            if (!Directory.Exists(clean))
+                try { Directory.CreateDirectory(clean); } catch { }
+        }
+        var batch = await Task.Run(() => WorkspaceRegistryService.AddWorkspaces(_codexHome, list));
+        var msg = $"已加入 {batch.Added} 个项目。";
+        if (batch.AlreadyExists > 0) msg += $"\n{batch.AlreadyExists} 个已经存在，跳过。";
+        if (batch.Failed > 0) msg += $"\n{batch.Failed} 个失败。";
+        if (!string.IsNullOrEmpty(batch.ErrorMsg)) msg += "\n\n错误：" + batch.ErrorMsg;
+        msg += "\n\n请重启 Codex Desktop 看左侧栏。";
+        await Dialogs.InfoAsync(this, "完成", msg);
+        DataChanged = true;
+        RebuildList();
+        BannerAddAllBtn.IsEnabled = true;
+    }
+
+    private void OnDismissBanner(object? sender, RoutedEventArgs e)
+    {
+        _bannerDismissed = true;
+        UnregisteredBanner.IsVisible = false;
     }
 
     private Control MakeGroup(string cwd, List<ConversationInfo> items, bool expanded)
@@ -173,19 +249,19 @@ public partial class ConversationsWindow : Window
         {
             var addBtn = new Button
             {
-                Content = "+ 加入工作区",
+                Content = "⊕ 加入工作区",
                 FontSize = 11,
-                Padding = new Thickness(8, 2),
-                Background = Brushes.Transparent,
-                Foreground = (IBrush)Application.Current!.FindResource("MutedBrush")!,
-                BorderBrush = (IBrush)Application.Current!.FindResource("BorderBrush2")!,
-                BorderThickness = new Thickness(1),
+                FontWeight = FontWeight.Bold,
+                Padding = new Thickness(10, 4),
+                Background = new SolidColorBrush(Color.FromRgb(0xFA, 0x8C, 0x16)),
+                Foreground = Brushes.White,
+                BorderThickness = new Thickness(0),
                 CornerRadius = new CornerRadius(999),
                 Margin = new Thickness(8, 0, 0, 0),
                 Cursor = new Cursor(StandardCursorType.Hand),
                 VerticalAlignment = VerticalAlignment.Center
             };
-            ToolTip.SetTip(addBtn, "把这个项目加入 Codex Desktop 左侧工作区列表");
+            ToolTip.SetTip(addBtn, "把这个项目加入 Codex Desktop 左侧工作区列表，否则在 Codex 里看不到该项目下的对话");
             addBtn.Click += async (_, e) =>
             {
                 e.Handled = true;

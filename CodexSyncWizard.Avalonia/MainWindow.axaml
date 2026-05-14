@@ -91,15 +91,11 @@
         <Grid Grid.Row="6" Margin="0,16,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
-            <Button Classes="link" Content="高级" Click="OnAdvanced"/>
-            <Button Classes="link" Content="批量" Margin="16,0,0,0" Click="OnBulk"/>
-            <Button Classes="link" Content="命令" Margin="16,0,0,0" Click="OnCommand"/>
-            <Button x:Name="UpdateLink" Grid.Column="4" Classes="link" Content="" IsVisible="False" Click="OnUpdateLink"/>
+            <Button Grid.Column="0" Classes="link" Content="高级" Click="OnAdvanced"/>
+            <Button x:Name="UpdateLink" Grid.Column="2" Classes="link" Content="" IsVisible="False" Click="OnUpdateLink"/>
         </Grid>
     </Grid>
 </Window>

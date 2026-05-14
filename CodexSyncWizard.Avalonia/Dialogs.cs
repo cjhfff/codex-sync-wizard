@@ -31,8 +31,8 @@ public static class Dialogs
         var dlg = new Window
         {
             Title = title,
-            Width = 420,
-            MinWidth = 420,
+            Width = 500,
+            MinWidth = 500,
             SizeToContent = SizeToContent.Height,
             CanResize = false,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
