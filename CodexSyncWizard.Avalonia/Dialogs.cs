@@ -80,6 +80,45 @@ public static class Dialogs
     }
 
     /// <summary>
+    /// SqliteLockedException 携带占用进程时，弹「强制结束并迁移」对话框，让用户选择是否杀进程后重试。
+    /// 返回 true 表示用户选择强制结束 — 调用方应该 kill 这些进程后重试整个迁移。
+    /// 返回 false 表示用户取消。
+    /// </summary>
+    public static async Task<bool> ShowCodexRunningWithKillAsync(Window parent, SqliteLockedException ex)
+    {
+        if (ex.BlockingProcesses.Count == 0)
+        {
+            await InfoAsync(parent, "Codex 客户端正在运行", ex.Message);
+            return false;
+        }
+        var holderList = string.Join("\n", ex.BlockingProcesses.Select(h => $"  · {h.ProcessName} (PID {h.Pid})"));
+        return await ConfirmAsync(parent, "Codex 客户端正在运行",
+            $"以下进程正在使用 Codex 数据库，迁移会失败:\n\n{holderList}\n\n" +
+            "强制结束这些进程并继续迁移？\n" +
+            "(未保存的 Codex 对话会丢；迁移完后需要重新启动 Codex)");
+    }
+
+    /// <summary>
+    /// 用 ProcessKiller 杀掉一组进程，结束失败时弹错误。
+    /// 返回 true 表示全部杀成功，可以重试操作。
+    /// </summary>
+    public static async Task<bool> KillBlockersAsync(Window parent, List<FileHolder> blockers)
+    {
+        var kill = await Task.Run(() => ProcessKiller.KillAll(blockers));
+        if (kill.Failed > 0)
+        {
+            await ErrorAsync(parent, "部分进程结束失败",
+                $"已结束 {kill.Killed} 个，但有 {kill.Failed} 个失败:\n" +
+                string.Join("\n", kill.Errors) +
+                "\n\n可能是需要管理员权限。请右键以管理员身份运行本程序后重试。");
+            return false;
+        }
+        // 让 OS 释放文件句柄
+        await Task.Delay(500);
+        return true;
+    }
+
+    /// <summary>
     /// 统一 catch ProviderNotDefinedException 的入口。
     /// - 大小写错: 弹硬错误，返回 false (不要重试)
     /// - 完全没定义: 弹软警告，返回 true 表示用户选择"继续迁移"应该重试 (传 allowMissingProvider: true)

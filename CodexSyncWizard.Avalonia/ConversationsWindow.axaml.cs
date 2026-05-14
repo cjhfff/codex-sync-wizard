@@ -544,6 +544,22 @@ public partial class ConversationsWindow : Window
                     MoveBtn.IsEnabled = true;
                     return;
                 }
+                catch (SqliteLockedException ex)
+                {
+                    if (!await Dialogs.ShowCodexRunningWithKillAsync(this, ex))
+                    {
+                        FooterHint.Text = "勾选后选择目标渠道，点「迁移选中」";
+                        MoveBtn.IsEnabled = true;
+                        return;
+                    }
+                    if (!await Dialogs.KillBlockersAsync(this, ex.BlockingProcesses))
+                    {
+                        FooterHint.Text = "勾选后选择目标渠道，点「迁移选中」";
+                        MoveBtn.IsEnabled = true;
+                        return;
+                    }
+                    continue;
+                }
             }
             if (choice.SetDefault)
                 await Task.Run(() => ConfigService.WriteProvider(home, t));
@@ -576,15 +592,12 @@ public partial class ConversationsWindow : Window
             await Dialogs.WarnIfPartialSyncAsync(this, result);
 
             await Dialogs.InfoAsync(this, "完成",
-                $"已迁移 {result.RolloutFilesSynced} 个对话，数据库 {result.SqliteRowsSynced} 条记录。{extra}\n\n备份：{result.BackupPath}");
+                $"已迁移 {result.RolloutFilesSynced} 个对话，数据库 {result.SqliteRowsSynced} 条记录。{extra}" +
+                "\n\n⚠ 必须彻底退出 Codex 客户端 (含托盘)，再重新启动才能看到迁移后的对话。\n   Codex 内存缓存不会自己刷新。" +
+                $"\n\n备份：{result.BackupPath}");
             Close();
         }
-        catch (SqliteLockedException ex)
-        {
-            await Dialogs.InfoAsync(this, "Codex 客户端正在运行", ex.Message);
-            FooterHint.Text = "勾选后选择目标渠道，点「迁移选中」";
-            MoveBtn.IsEnabled = true;
-        }
+        // Note: SqliteLockedException handled inside the do-while above with auto-kill retry.
         catch (Exception ex)
         {
             await Dialogs.ErrorAsync(this, "错误", ex.Message, copyableDetail: ex.ToString());

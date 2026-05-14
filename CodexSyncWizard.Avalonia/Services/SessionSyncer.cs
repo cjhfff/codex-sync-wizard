@@ -28,8 +28,15 @@ public class SyncCancelledException : OperationCanceledException
 
 public class SqliteLockedException : Exception
 {
-    public SqliteLockedException()
-        : base("数据库被占用 — 请先关闭 Codex 客户端再试") { }
+    /// <summary>真正持有 state_5.sqlite 的进程列表（不含本工具自己）。Windows 平台才有内容。</summary>
+    public List<FileHolder> BlockingProcesses { get; }
+    public SqliteLockedException(List<FileHolder>? blocking = null)
+        : base(blocking?.Count > 0
+            ? $"数据库被占用 — 持有它的进程: {string.Join(", ", blocking.Select(h => $"{h.ProcessName}({h.Pid})"))}"
+            : "数据库被占用 — 请先关闭 Codex 客户端再试")
+    {
+        BlockingProcesses = blocking ?? new List<FileHolder>();
+    }
 }
 
 public class ProviderNotDefinedException : Exception
@@ -56,11 +63,41 @@ public static class SessionSyncer
 {
     public static bool IsCodexLikelyRunning(string codexHome)
     {
+        return GetCodexBlockingProcesses(codexHome).Count > 0 ||
+               IsAnySqliteFileLockedByOthers(codexHome);
+    }
+
+    /// <summary>
+    /// 返回除本工具自己外、当前持有 state_5.sqlite / -wal / -shm 的进程列表。
+    /// Codex 静默 idle 时 BEGIN IMMEDIATE 测试会 false-pass，但文件句柄检测靠谱。
+    /// Windows 用 Restart Manager (FileLockDiagnostics)；其他平台返回空 list 退化到 SQLite 写锁兜底。
+    /// </summary>
+    public static List<FileHolder> GetCodexBlockingProcesses(string codexHome)
+    {
+        var sqlitePath = Path.Combine(codexHome, "state_5.sqlite");
+        if (!File.Exists(sqlitePath)) return new List<FileHolder>();
+
+        var paths = new List<string> { sqlitePath };
+        if (File.Exists(sqlitePath + "-wal")) paths.Add(sqlitePath + "-wal");
+        if (File.Exists(sqlitePath + "-shm")) paths.Add(sqlitePath + "-shm");
+
+        var myPid = System.Diagnostics.Process.GetCurrentProcess().Id;
+        var holders = FileLockDiagnostics.GetProcessesLocking(paths.ToArray());
+        return holders
+            .Where(h => h.Pid != myPid)
+            .GroupBy(h => h.Pid)
+            .Select(g => g.First())
+            .ToList();
+    }
+
+    /// <summary>兜底用 SQLite 写锁测试。仅在 FileLockDiagnostics 不可用 (非 Windows) 时有意义。</summary>
+    private static bool IsAnySqliteFileLockedByOthers(string codexHome)
+    {
+        if (System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows))
+            return false;
         var sqlitePath = Path.Combine(codexHome, "state_5.sqlite");
         if (!File.Exists(sqlitePath)) return false;
-        if (File.Exists(sqlitePath + "-wal") || File.Exists(sqlitePath + "-shm"))
-            return TestSqliteWritable(sqlitePath) == false;
-        return TestSqliteWritable(sqlitePath) == false;
+        return !TestSqliteWritable(sqlitePath);
     }
 
     private static bool TestSqliteWritable(string sqlitePath)
@@ -109,8 +146,9 @@ public static class SessionSyncer
         IProgress<string>? progress = null, CancellationToken ct = default,
         bool allowMissingProvider = false)
     {
-        if (IsCodexLikelyRunning(codexHome))
-            throw new SqliteLockedException();
+        var blockingProcs = GetCodexBlockingProcesses(codexHome);
+        if (blockingProcs.Count > 0 || IsAnySqliteFileLockedByOthers(codexHome))
+            throw new SqliteLockedException(blockingProcs);
 
         ValidateTargetProvider(codexHome, targetProvider, allowMissingProvider);
 
@@ -310,8 +348,9 @@ public static class SessionSyncer
     public static SyncResult DeleteSpecificFiles(string codexHome, IList<string> filePaths,
         IProgress<string>? progress = null, CancellationToken ct = default)
     {
-        if (IsCodexLikelyRunning(codexHome))
-            throw new SqliteLockedException();
+        var blockingProcs = GetCodexBlockingProcesses(codexHome);
+        if (blockingProcs.Count > 0 || IsAnySqliteFileLockedByOthers(codexHome))
+            throw new SqliteLockedException(blockingProcs);
 
         progress?.Report("正在备份...");
         var backupPath = BackupService.CreateBackup(codexHome);
@@ -392,8 +431,9 @@ public static class SessionSyncer
         string targetProvider, IProgress<string>? progress = null, CancellationToken ct = default,
         bool allowMissingProvider = false)
     {
-        if (IsCodexLikelyRunning(codexHome))
-            throw new SqliteLockedException();
+        var blockingProcs = GetCodexBlockingProcesses(codexHome);
+        if (blockingProcs.Count > 0 || IsAnySqliteFileLockedByOthers(codexHome))
+            throw new SqliteLockedException(blockingProcs);
 
         ValidateTargetProvider(codexHome, targetProvider, allowMissingProvider);
 

@@ -302,6 +302,12 @@ public partial class MainWindow : Window
                     if (ex.IsCaseMismatch) await Dialogs.ShowProviderCaseMismatchAsync(this, ex);
                     return;
                 }
+                catch (SqliteLockedException ex)
+                {
+                    if (!await Dialogs.ShowCodexRunningWithKillAsync(this, ex)) return;
+                    if (!await Dialogs.KillBlockersAsync(this, ex.BlockingProcesses)) return;
+                    continue;
+                }
             }
 
             foreach (var cwd in unregistered)
@@ -322,13 +328,12 @@ public partial class MainWindow : Window
             if (batch.Failed > 0) extras.Add($"⚠ {batch.Failed} 个项目未加入（{batch.ErrorMsg}）");
 
             await Dialogs.InfoAsync(this, "完成",
-                "全部归并完成！\n\n" + string.Join("\n", extras) + "\n\n备份：" + result.BackupPath);
+                "全部归并完成！\n\n" + string.Join("\n", extras) +
+                "\n\n⚠ 必须彻底退出 Codex 客户端 (包括右下角托盘 / Helper 子进程)，然后重新启动，才能在列表里看到迁移后的对话。\n   它内存里的旧缓存不会自己刷新。" +
+                "\n\n备份：" + result.BackupPath);
             await DetectAsync();
         }
-        catch (SqliteLockedException ex)
-        {
-            await Dialogs.InfoAsync(this, "Codex 客户端正在运行", ex.Message);
-        }
+        // Note: SqliteLockedException now handled inside the do-while above with auto-kill retry.
         catch (Exception ex)
         {
             await Dialogs.ErrorAsync(this, "错误", ex.Message, copyableDetail: ex.ToString());

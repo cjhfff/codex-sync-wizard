@@ -115,6 +115,14 @@ public partial class BulkOperationsWindow : Window
                     if (ex.IsCaseMismatch) await Dialogs.ShowProviderCaseMismatchAsync(this, ex);
                     return;
                 }
+                catch (SqliteLockedException ex)
+                {
+                    Log("✗ " + ex.Message);
+                    if (!await Dialogs.ShowCodexRunningWithKillAsync(this, ex)) return;
+                    if (!await Dialogs.KillBlockersAsync(this, ex.BlockingProcesses)) return;
+                    Log("已结束占用进程，重试迁移...");
+                    continue;
+                }
             }
             Log($"完成: 改 {result.RolloutFilesSynced} 个对话 / {result.SqliteRowsSynced} 条数据库");
             Log($"备份: {result.BackupPath}");
@@ -122,11 +130,7 @@ public partial class BulkOperationsWindow : Window
             DataChanged = true;
             Reload();
         }
-        catch (SqliteLockedException ex)
-        {
-            Log("✗ " + ex.Message);
-            await Dialogs.InfoAsync(this, "Codex 客户端正在运行", ex.Message);
-        }
+        // Note: SqliteLockedException handled inside the do-while above with auto-kill retry.
         catch (Exception ex)
         {
             Log("✗ " + ex.Message);
@@ -151,16 +155,27 @@ public partial class BulkOperationsWindow : Window
         try
         {
             var home = _codexHome;
-            var result = await Task.Run(() => SessionSyncer.DeleteSpecificFiles(home, paths, progress));
+            SyncResult result;
+            while (true)
+            {
+                try
+                {
+                    result = await Task.Run(() => SessionSyncer.DeleteSpecificFiles(home, paths, progress));
+                    break;
+                }
+                catch (SqliteLockedException ex)
+                {
+                    Log("✗ " + ex.Message);
+                    if (!await Dialogs.ShowCodexRunningWithKillAsync(this, ex)) return;
+                    if (!await Dialogs.KillBlockersAsync(this, ex.BlockingProcesses)) return;
+                    Log("已结束占用进程，重试删除...");
+                    continue;
+                }
+            }
             Log($"完成: 删除 {result.RolloutFilesSynced} 个对话 / {result.SqliteRowsSynced} 条数据库");
             Log($"备份: {result.BackupPath}");
             DataChanged = true;
             Reload();
-        }
-        catch (SqliteLockedException ex)
-        {
-            Log("✗ " + ex.Message);
-            await Dialogs.InfoAsync(this, "Codex 客户端正在运行", ex.Message);
         }
         catch (Exception ex)
         {

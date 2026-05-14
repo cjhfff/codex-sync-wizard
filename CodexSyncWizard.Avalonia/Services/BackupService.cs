@@ -88,9 +88,15 @@ public static class BackupService
         GC.Collect();
         GC.WaitForPendingFinalizers();
 
+        var blockers = SessionSyncer.GetCodexBlockingProcesses(codexHome);
+        if (blockers.Count > 0)
+            return new RestoreResult(false, 0, false, false,
+                $"Codex 客户端正在运行 — 持有数据库的进程:\n{FileLockDiagnostics.FormatHolders(blockers)}\n\n" +
+                "请先结束这些进程（任务管理器或弹窗里的「强制结束并重试」），否则旧数据库的 WAL 会覆盖刚还原的内容。",
+                blockers);
         if (SessionSyncer.IsCodexLikelyRunning(codexHome))
             return new RestoreResult(false, 0, false, false,
-                "Codex 客户端正在运行 — 请彻底关闭（含托盘 / Helper 进程）后再还原。否则旧数据库的 WAL 会覆盖刚还原的内容。");
+                "Codex 客户端正在运行 — 请彻底关闭（含托盘 / Helper 进程）后再还原。");
 
         bool sqliteOk = false;
         bool configOk = false;
