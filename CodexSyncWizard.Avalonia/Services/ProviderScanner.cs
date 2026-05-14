@@ -38,8 +38,7 @@ public static class ProviderScanner
         {
             try
             {
-                using var conn = new SqliteConnection($"Data Source={sqlitePath};Mode=ReadOnly");
-                conn.Open();
+                using var conn = SqliteConn.Open(sqlitePath, "ReadOnly");
                 using var cmdMap = conn.CreateCommand();
                 cmdMap.CommandText = "SELECT id, source FROM threads";
                 using (var rr = cmdMap.ExecuteReader())

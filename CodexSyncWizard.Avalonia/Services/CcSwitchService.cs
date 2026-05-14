@@ -25,8 +25,7 @@ public static class CcSwitchService
 
         try
         {
-            using var conn = new SqliteConnection($"Data Source={path};Mode=ReadOnly");
-            conn.Open();
+            using var conn = SqliteConn.Open(path, "ReadOnly");
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "SELECT id FROM providers WHERE app_type = 'codex' AND is_current = 1 LIMIT 1";
             var result = cmd.ExecuteScalar() as string;

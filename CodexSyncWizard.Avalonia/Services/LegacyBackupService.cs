@@ -199,8 +199,7 @@ public static class LegacyBackupService
 
         try
         {
-            using var conn = new SqliteConnection($"Data Source={sqlitePath}");
-            conn.Open();
+            using var conn = SqliteConn.Open(sqlitePath);
             using var tx = conn.BeginTransaction();
             int updated = 0;
             foreach (var kv in threadProviderMap)

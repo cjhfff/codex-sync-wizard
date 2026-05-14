@@ -61,8 +61,7 @@ public static class SessionSyncer
     {
         try
         {
-            using var conn = new SqliteConnection($"Data Source={sqlitePath};Mode=ReadWrite");
-            conn.Open();
+            using var conn = SqliteConn.Open(sqlitePath, "ReadWrite");
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "BEGIN IMMEDIATE; ROLLBACK;";
             cmd.ExecuteNonQuery();
@@ -179,8 +178,7 @@ public static class SessionSyncer
 
         try
         {
-            using var conn = new SqliteConnection($"Data Source={sqlitePath}");
-            conn.Open();
+            using var conn = SqliteConn.Open(sqlitePath);
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "DELETE FROM threads WHERE model_provider != @target";
             cmd.Parameters.AddWithValue("@target", targetProvider);
@@ -281,8 +279,7 @@ public static class SessionSyncer
         {
             try
             {
-                using var conn = new SqliteConnection($"Data Source={sqlitePath};Mode=ReadOnly");
-                conn.Open();
+                using var conn = SqliteConn.Open(sqlitePath, "ReadOnly");
                 using var cmd = conn.CreateCommand();
                 cmd.CommandText = "SELECT COUNT(*) FROM threads WHERE model_provider != @target";
                 cmd.Parameters.AddWithValue("@target", targetProvider);
@@ -353,8 +350,7 @@ public static class SessionSyncer
         if (!File.Exists(sqlitePath) || threadIds.Count == 0) return 0;
         try
         {
-            using var conn = new SqliteConnection($"Data Source={sqlitePath}");
-            conn.Open();
+            using var conn = SqliteConn.Open(sqlitePath);
             using var tx = conn.BeginTransaction();
             int deleted = 0;
             foreach (var id in threadIds)
@@ -450,8 +446,7 @@ public static class SessionSyncer
 
         try
         {
-            using var conn = new SqliteConnection($"Data Source={sqlitePath}");
-            conn.Open();
+            using var conn = SqliteConn.Open(sqlitePath);
             using var tx = conn.BeginTransaction();
             int updated = 0;
             foreach (var id in threadIds)
@@ -482,8 +477,7 @@ public static class SessionSyncer
 
         try
         {
-            using var conn = new SqliteConnection($"Data Source={sqlitePath}");
-            conn.Open();
+            using var conn = SqliteConn.Open(sqlitePath);
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "UPDATE threads SET model_provider = @target WHERE model_provider != @target";
             cmd.Parameters.AddWithValue("@target", targetProvider);

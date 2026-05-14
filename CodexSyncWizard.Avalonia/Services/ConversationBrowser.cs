@@ -72,8 +72,7 @@ public static class ConversationBrowser
 
         try
         {
-            using var conn = new SqliteConnection($"Data Source={sqlitePath};Mode=ReadOnly");
-            conn.Open();
+            using var conn = SqliteConn.Open(sqlitePath, "ReadOnly");
             using var cmd = conn.CreateCommand();
             if (IncludeInternalSources)
                 cmd.CommandText = @"SELECT rollout_path, title, first_user_message, cwd, model, created_at_ms, source

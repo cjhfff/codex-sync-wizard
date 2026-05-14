@@ -42,8 +42,7 @@ public static class BackupService
     {
         try
         {
-            using var conn = new SqliteConnection($"Data Source={sqlitePath};Mode=ReadWrite");
-            conn.Open();
+            using var conn = SqliteConn.Open(sqlitePath, "ReadWrite");
             using var cmd = conn.CreateCommand();
             cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
             cmd.ExecuteNonQuery();
@@ -83,6 +82,12 @@ public static class BackupService
 
     public static RestoreResult RestoreBackup(string codexHome, string backupDir)
     {
+        // 兜底: 清空 ADO.NET 内部 SqliteConnection 池，避免我们自己的扫描/迁移留下的池化连接占着文件。
+        // (常规连接已用 SqliteConn.Open 强制 Pooling=False；这一行保护历史第三方代码留下的池连接。)
+        SqliteConn.ClearAllPools();
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+
         if (SessionSyncer.IsCodexLikelyRunning(codexHome))
             return new RestoreResult(false, 0, false, false,
                 "Codex 客户端正在运行 — 请彻底关闭（含托盘 / Helper 进程）后再还原。否则旧数据库的 WAL 会覆盖刚还原的内容。");
