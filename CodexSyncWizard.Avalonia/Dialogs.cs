@@ -52,32 +52,46 @@ public static class Dialogs
     }
 
     /// <summary>
-    /// 把 ProviderNotDefinedException 翻译成友好弹窗。
+    /// 大小写错误的硬错误弹窗 (无路可走，必须改名)。
     /// </summary>
-    public static async Task ShowProviderNotDefinedAsync(Window parent, ProviderNotDefinedException ex)
+    public static async Task ShowProviderCaseMismatchAsync(Window parent, ProviderNotDefinedException ex)
     {
-        string msg;
-        if (ex.CaseMismatches.Count > 0)
-        {
-            msg = $"大小写不一致。Codex 对 provider 名严格区分大小写。\n\n" +
+        var msg = $"大小写不一致。Codex 对 provider 名严格区分大小写，迁过去续聊会报「provider not found」。\n\n" +
                   $"你写的: 「{ex.ProviderName}」\n" +
                   $"config.toml 里实际是: 「{string.Join("」/「", ex.CaseMismatches)}」\n\n" +
                   "改成 config.toml 里一字不差的写法重试。";
-        }
-        else if (ex.AllDefined.Count > 0)
+        await ErrorAsync(parent, "大小写不一致 — 必须改名", msg);
+    }
+
+    /// <summary>
+    /// 目标 provider 在 config.toml 里没定义的软警告。用户点"继续迁移"会绕过校验。
+    /// 适用场景: cc-switch 用户把对话迁到一个目前不在 config.toml 但在 cc-switch 其他预设里的 provider。
+    /// 返回 true 表示用户选择继续。
+    /// </summary>
+    public static async Task<bool> ShowProviderMissingSoftWarnAsync(Window parent, ProviderNotDefinedException ex)
+    {
+        var msg = $"「{ex.ProviderName}」目前不在 config.toml 里。\n";
+        if (ex.AllDefined.Count > 0)
+            msg += $"\nconfig.toml 当前定义的: {string.Join(", ", ex.AllDefined.Take(8))}" +
+                   (ex.AllDefined.Count > 8 ? " ..." : "") + "\n";
+        msg += "\n如果你用 cc-switch 之类的工具切换 provider — 这是正常的，切回那个 provider 时就能用。\n\n" +
+               "继续迁移？还是先去 config.toml 加 [model_providers." + ex.ProviderName + "] 段再来？";
+        return await ConfirmAsync(parent, "目标 provider 不在当前 config.toml", msg);
+    }
+
+    /// <summary>
+    /// 统一 catch ProviderNotDefinedException 的入口。
+    /// - 大小写错: 弹硬错误，返回 false (不要重试)
+    /// - 完全没定义: 弹软警告，返回 true 表示用户选择"继续迁移"应该重试 (传 allowMissingProvider: true)
+    /// </summary>
+    public static async Task<bool> HandleProviderNotDefinedAsync(Window parent, ProviderNotDefinedException ex)
+    {
+        if (ex.IsCaseMismatch)
         {
-            msg = $"「{ex.ProviderName}」在 config.toml 里没定义。\n\n" +
-                  $"已定义的 provider: {string.Join(", ", ex.AllDefined.Take(8))}" +
-                  (ex.AllDefined.Count > 8 ? " ..." : "") + "\n\n" +
-                  $"要么改用上面已有的名字，要么在 config.toml 加上:\n" +
-                  $"[model_providers.{ex.ProviderName}]";
+            await ShowProviderCaseMismatchAsync(parent, ex);
+            return false;
         }
-        else
-        {
-            msg = $"「{ex.ProviderName}」在 config.toml 里没定义，且 config.toml 里没有任何 [model_providers.X] 段。\n\n" +
-                  "请先在 config.toml 配置 provider。";
-        }
-        await ErrorAsync(parent, "目标 provider 不存在", msg);
+        return await ShowProviderMissingSoftWarnAsync(parent, ex);
     }
 
     /// <summary>

@@ -239,6 +239,7 @@ public static class CliRunner
         var to = opts.GetValueOrDefault("to") ?? opts.GetValueOrDefault("all-to");
         var allTo = opts.ContainsKey("all-to");
         var yes = opts.ContainsKey("yes");
+        var allowMissing = opts.ContainsKey("allow-missing-provider");
 
         if (string.IsNullOrEmpty(to))
         {
@@ -304,7 +305,7 @@ public static class CliRunner
         var progress = new Progress<string>(s => Console.WriteLine("  " + s));
         try
         {
-            var result = SessionSyncer.SyncSpecificFiles(home, sourcePaths, to!, progress);
+            var result = SessionSyncer.SyncSpecificFiles(home, sourcePaths, to!, progress, allowMissingProvider: allowMissing);
             Console.WriteLine($"\n完成: 改 {result.RolloutFilesSynced} 个对话 / {result.SqliteRowsSynced} 条数据库记录");
             Console.WriteLine($"备份: {result.BackupPath}");
             if (!string.IsNullOrEmpty(result.SqliteError))
@@ -323,10 +324,14 @@ public static class CliRunner
         catch (ProviderNotDefinedException ex)
         {
             Console.Error.WriteLine("✗ " + ex.Message);
-            if (ex.CaseMismatches.Count > 0)
+            if (ex.IsCaseMismatch)
                 Console.Error.WriteLine("  大小写不一致，config.toml 里实际是: " + string.Join(", ", ex.CaseMismatches));
-            else if (ex.AllDefined.Count > 0)
-                Console.Error.WriteLine("  config.toml 里已定义: " + string.Join(", ", ex.AllDefined));
+            else
+            {
+                if (ex.AllDefined.Count > 0)
+                    Console.Error.WriteLine("  config.toml 里已定义: " + string.Join(", ", ex.AllDefined));
+                Console.Error.WriteLine("  如果你用 cc-switch 之类切换 provider, 可以加 --allow-missing-provider 绕过此校验。");
+            }
             return 5;
         }
         catch (SqliteLockedException)

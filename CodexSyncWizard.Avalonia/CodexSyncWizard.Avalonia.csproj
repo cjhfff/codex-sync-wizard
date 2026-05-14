@@ -9,9 +9,9 @@
     <AvaloniaUseCompiledBindingsByDefault>true</AvaloniaUseCompiledBindingsByDefault>
     <AssemblyName>CodexSyncWizard</AssemblyName>
 
-    <Version>1.0.6</Version>
-    <FileVersion>1.0.6.0</FileVersion>
-    <AssemblyVersion>1.0.6.0</AssemblyVersion>
+    <Version>1.0.7</Version>
+    <FileVersion>1.0.7.0</FileVersion>
+    <AssemblyVersion>1.0.7.0</AssemblyVersion>
     <Product>Codex 对话同步</Product>
     <AssemblyTitle>Codex 对话同步</AssemblyTitle>
     <Company>CodexSyncWizard</Company>

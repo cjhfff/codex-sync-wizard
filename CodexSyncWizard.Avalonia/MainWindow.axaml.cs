@@ -279,11 +279,30 @@ public partial class MainWindow : Window
         if (!ok) return;
 
         ConsolidateBtn.IsEnabled = false;
+        bool allowMissing = false;
         try
         {
             var home = _codexHome;
             var t = target;
-            var result = await Task.Run(() => SessionSyncer.SyncSpecificFiles(home, paths, t));
+            SyncResult result;
+            while (true)
+            {
+                try
+                {
+                    result = await Task.Run(() => SessionSyncer.SyncSpecificFiles(home, paths, t, allowMissingProvider: allowMissing));
+                    break;
+                }
+                catch (ProviderNotDefinedException ex)
+                {
+                    if (!ex.IsCaseMismatch && !allowMissing && await Dialogs.HandleProviderNotDefinedAsync(this, ex))
+                    {
+                        allowMissing = true;
+                        continue;
+                    }
+                    if (ex.IsCaseMismatch) await Dialogs.ShowProviderCaseMismatchAsync(this, ex);
+                    return;
+                }
+            }
 
             foreach (var cwd in unregistered)
             {
@@ -305,10 +324,6 @@ public partial class MainWindow : Window
             await Dialogs.InfoAsync(this, "完成",
                 "全部归并完成！\n\n" + string.Join("\n", extras) + "\n\n备份：" + result.BackupPath);
             await DetectAsync();
-        }
-        catch (ProviderNotDefinedException ex)
-        {
-            await Dialogs.ShowProviderNotDefinedAsync(this, ex);
         }
         catch (SqliteLockedException ex)
         {

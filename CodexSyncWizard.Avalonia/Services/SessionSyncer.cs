@@ -37,12 +37,18 @@ public class ProviderNotDefinedException : Exception
     public string ProviderName { get; }
     public List<string> CaseMismatches { get; }
     public List<string> AllDefined { get; }
+    /// <summary>
+    /// true 表示大小写错（同名但大小写不一致）—— 永远是硬错误，迁过去 Codex 续聊会 provider not found。
+    /// false 表示根本没定义 —— 软错误，cc-switch 用户切回那个 provider 时也合法，可允许用户绕过。
+    /// </summary>
+    public bool IsCaseMismatch { get; }
     public ProviderNotDefinedException(string providerName, List<string> caseMismatches, List<string> allDefined)
         : base($"目标 provider「{providerName}」在 config.toml 里没定义")
     {
         ProviderName = providerName;
         CaseMismatches = caseMismatches;
         AllDefined = allDefined;
+        IsCaseMismatch = caseMismatches.Count > 0;
     }
 }
 
@@ -75,9 +81,13 @@ public static class SessionSyncer
 
     /// <summary>
     /// 校验目标 provider 是否在 config.toml 里定义。
-    /// 大小写不一致也算"没定义"——Codex 读 model_provider 时是大小写敏感的。
+    /// - 严格匹配 → OK
+    /// - 大小写不一致 → 永远抛 (Codex 续聊会 provider not found，这种基本是手抖)
+    /// - 完全没定义 → 取决于 allowMissingProvider
+    ///     默认 false：抛 ProviderNotDefinedException (IsCaseMismatch=false)，UI 上弹软警告让用户决定
+    ///     true：放行 (cc-switch 用户场景 — 把对话迁到 cc-switch 预设里的某个旧 provider，切回去就生效)
     /// </summary>
-    public static void ValidateTargetProvider(string codexHome, string targetProvider)
+    public static void ValidateTargetProvider(string codexHome, string targetProvider, bool allowMissingProvider = false)
     {
         var defined = ConfigService.ListDefinedProviders(codexHome);
         if (defined.Count == 0) return; // config.toml 不存在或没定义任何 provider，跳过校验
@@ -86,17 +96,23 @@ public static class SessionSyncer
         var caseMismatches = defined
             .Where(p => string.Equals(p, targetProvider, StringComparison.OrdinalIgnoreCase))
             .ToList();
-        throw new ProviderNotDefinedException(targetProvider, caseMismatches, defined);
+        // 大小写错 → 总是抛 (即使 allowMissingProvider)
+        if (caseMismatches.Count > 0)
+            throw new ProviderNotDefinedException(targetProvider, caseMismatches, defined);
+        // 完全没定义 → 看 allow
+        if (!allowMissingProvider)
+            throw new ProviderNotDefinedException(targetProvider, caseMismatches, defined);
     }
 
     public static SyncResult Sync(string codexHome, string targetProvider, bool updateConfig,
         SyncMode mode = SyncMode.MergeToTarget,
-        IProgress<string>? progress = null, CancellationToken ct = default)
+        IProgress<string>? progress = null, CancellationToken ct = default,
+        bool allowMissingProvider = false)
     {
         if (IsCodexLikelyRunning(codexHome))
             throw new SqliteLockedException();
 
-        ValidateTargetProvider(codexHome, targetProvider);
+        ValidateTargetProvider(codexHome, targetProvider, allowMissingProvider);
 
         progress?.Report("正在备份...");
         var backupPath = BackupService.CreateBackup(codexHome);
@@ -373,12 +389,13 @@ public static class SessionSyncer
     }
 
     public static SyncResult SyncSpecificFiles(string codexHome, IList<string> filePaths,
-        string targetProvider, IProgress<string>? progress = null, CancellationToken ct = default)
+        string targetProvider, IProgress<string>? progress = null, CancellationToken ct = default,
+        bool allowMissingProvider = false)
     {
         if (IsCodexLikelyRunning(codexHome))
             throw new SqliteLockedException();
 
-        ValidateTargetProvider(codexHome, targetProvider);
+        ValidateTargetProvider(codexHome, targetProvider, allowMissingProvider);
 
         progress?.Report("正在备份...");
         var backupPath = BackupService.CreateBackup(codexHome);

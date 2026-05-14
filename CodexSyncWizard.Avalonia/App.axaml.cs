@@ -195,8 +195,13 @@ public partial class App : Application
                 return;
             }
 
+            // cc-switch 监听场景: newProvider 是 cc-switch 刚切到的 provider，
+            // 大概率已经在 config.toml (cc-switch 切的时候就写了)，但万一第三方时序问题，
+            // 默认放行 missing-provider 校验，避免静默失败让自动同步罢工。
+            // 大小写错仍会被抓到。
             var result = await Task.Run(() =>
-                SessionSyncer.Sync(home, newProvider, false, SyncMode.MergeToTarget));
+                SessionSyncer.Sync(home, newProvider, false, SyncMode.MergeToTarget,
+                    allowMissingProvider: true));
             if (!string.IsNullOrEmpty(result.SqliteError))
             {
                 ShowNotification($"自动同步半成功 — {newProvider}",
@@ -217,8 +222,9 @@ public partial class App : Application
         }
         catch (ProviderNotDefinedException ex)
         {
-            ShowNotification("自动同步未执行 — provider 未定义",
-                $"目标「{ex.ProviderName}」在 config.toml 里没找到。请先在 config 里加上对应的 [model_providers.{ex.ProviderName}] 段。");
+            // 走到这就只有 IsCaseMismatch=true 的情况了 (因为 allowMissingProvider:true)
+            ShowNotification("自动同步未执行 — provider 大小写错",
+                $"目标「{ex.ProviderName}」与 config.toml 里的「{string.Join(", ", ex.CaseMismatches)}」大小写不一致。");
         }
         catch (Exception ex)
         {
